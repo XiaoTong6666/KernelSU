@@ -412,7 +412,8 @@ fun ModuleRepoDetailScreenMaterial(
                 )
                 when (page) {
                     0 -> ReadmePage(
-                        readmeHtml = state.readmeHtml,
+                        readmeContent = state.readmeContent,
+                        readmeIsMarkdown = state.readmeIsMarkdown,
                         readmeLoaded = state.readmeLoaded,
                         innerPadding = paddedInnerPadding,
                         scrollBehavior = scrollBehavior
@@ -462,7 +463,8 @@ fun ModuleRepoDetailScreenMaterial(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ReadmePage(
-    readmeHtml: String?,
+    readmeContent: String?,
+    readmeIsMarkdown: Boolean,
     readmeLoaded: Boolean,
     innerPadding: PaddingValues,
     scrollBehavior: TopAppBarScrollBehavior
@@ -491,10 +493,11 @@ private fun ReadmePage(
                     LoadingIndicator()
                 }
             }
-            if (contentReady && readmeLoaded && readmeHtml != null) {
+            if (contentReady && readmeLoaded && readmeContent != null) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     GithubMarkdown(
-                        content = readmeHtml,
+                        content = readmeContent,
+                        isMarkdown = readmeIsMarkdown,
                         onLoadingChange = { isLoading = it },
                         containerColor = MaterialTheme.colorScheme.surface,
                     )

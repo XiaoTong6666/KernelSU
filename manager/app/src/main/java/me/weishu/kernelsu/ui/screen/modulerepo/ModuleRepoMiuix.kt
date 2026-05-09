@@ -529,59 +529,54 @@ fun ModuleRepoScreenMiuix(
 
 @Composable
 private fun ReadmePage(
-    readmeHtml: String?,
+    readmeContent: String?,
+    readmeIsMarkdown: Boolean,
     readmeLoaded: Boolean,
     innerPadding: PaddingValues, scrollBehavior: ScrollBehavior, backdrop: LayerBackdrop?
 ) {
     val layoutDirection = LocalLayoutDirection.current
     Box(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) {
-        LazyColumn(
+        Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = PaddingValues(
+                .fillMaxSize()
+                .padding(
                 top = innerPadding.calculateTopPadding(),
                 start = innerPadding.calculateStartPadding(layoutDirection),
                 end = innerPadding.calculateEndPadding(layoutDirection),
                 bottom = innerPadding.calculateBottomPadding(),
-            ),
-            overscrollEffect = null,
+            )
         ) {
-            item {
-                val contentReady = rememberContentReady()
-                var isLoading by remember { mutableStateOf(true) }
-                if (isLoading) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(
-                                top = innerPadding.calculateTopPadding(),
-                                start = innerPadding.calculateStartPadding(layoutDirection),
-                                end = innerPadding.calculateEndPadding(layoutDirection),
-                                bottom = innerPadding.calculateBottomPadding(),
-                            ), contentAlignment = Alignment.Center
-                    ) {
-                        InfiniteProgressIndicator()
-                    }
-                }
-                AnimatedVisibility(
-                    visible = contentReady && readmeLoaded && readmeHtml != null,
-                    enter = expandVertically() + fadeIn(),
-                    exit = shrinkVertically() + fadeOut()
+            val contentReady = rememberContentReady()
+            var isLoading by remember { mutableStateOf(true) }
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column {
-                        Spacer(Modifier.height(6.dp))
-                        Card(
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                        ) {
-                            GithubMarkdown(content = readmeHtml!!, onLoadingChange = { isLoading = it })
-                        }
-                    }
+                    InfiniteProgressIndicator()
                 }
             }
-            item { Spacer(Modifier.height(12.dp)) }
+            AnimatedVisibility(
+                visible = contentReady && readmeLoaded && readmeContent != null,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp)
+                        .padding(top = 6.dp, bottom = 12.dp),
+                ) {
+                    GithubMarkdown(
+                        content = readmeContent!!,
+                        isMarkdown = readmeIsMarkdown,
+                        onLoadingChange = { isLoading = it },
+                        preferWebViewHorizontalGestures = true,
+                        fillHeight = true,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         }
     }
 }
@@ -1056,7 +1051,8 @@ fun ModuleRepoDetailScreenMiuix(
 
             when (page) {
                 0 -> ReadmePage(
-                    readmeHtml = state.readmeHtml,
+                    readmeContent = state.readmeContent,
+                    readmeIsMarkdown = state.readmeIsMarkdown,
                     readmeLoaded = state.readmeLoaded,
                     innerPadding = innerPadding,
                     scrollBehavior = scrollBehavior,

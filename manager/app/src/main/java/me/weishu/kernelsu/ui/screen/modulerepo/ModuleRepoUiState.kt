@@ -28,7 +28,8 @@ data class ModuleRepoActions(
 @Immutable
 data class ModuleRepoDetailUiState(
     val module: RepoModuleArg,
-    val readmeHtml: String?,
+    val readmeContent: String?,
+    val readmeIsMarkdown: Boolean,
     val readmeLoaded: Boolean,
     val detailReleases: List<ReleaseArg>,
     val webUrl: String,

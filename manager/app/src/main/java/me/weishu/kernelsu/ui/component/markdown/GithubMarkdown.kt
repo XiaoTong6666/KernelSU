@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -56,6 +57,11 @@ import kotlin.math.abs
 private val SEMICOLON_SPLIT = ";\\s*".toRegex()
 private val EQUALS_SPLIT = "=\\s*".toRegex()
 
+private data class WebViewRenderState(
+    val html: String,
+    val textZoom: Int,
+)
+
 @SuppressLint("JavascriptInterface", "SetJavaScriptEnabled", "WrongConstant")
 @Composable
 fun GithubMarkdown(
@@ -63,6 +69,9 @@ fun GithubMarkdown(
     isMarkdown: Boolean = false,
     onLoadingChange: (Boolean) -> Unit = {},
     containerColor: androidx.compose.ui.graphics.Color? = null,
+    preferWebViewHorizontalGestures: Boolean = false,
+    fillHeight: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val systemDensity = LocalResources.current.displayMetrics.density
@@ -124,6 +133,7 @@ fun GithubMarkdown(
             val frameLayout = FrameLayout(context)
             val webView = WebView(context).apply {
                 try {
+                    val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
                     setBackgroundColor(Color.TRANSPARENT)
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
@@ -142,7 +152,7 @@ fun GithubMarkdown(
                     }
                     layoutParams = FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.WRAP_CONTENT
+                        if (fillHeight) FrameLayout.LayoutParams.MATCH_PARENT else FrameLayout.LayoutParams.WRAP_CONTENT
                     )
                     addJavascriptInterface(scrollInterface, "AndroidScroll")
                     webViewClient = object : WebViewClient() {
@@ -157,6 +167,9 @@ fun GithubMarkdown(
                                 (function() {
                                     if (window.androidScrollInjected) return;
                                     window.androidScrollInjected = true;
+                                    var standaloneWebView = ${if (fillHeight) "true" else "false"};
+                                    var touchSlop = 8;
+                                    var verticalMomentumFrame = null;
                                 
                                     function checkScroll(target) {
                                         if (!target || target === document.body || target === document.documentElement) return {l: false, r: false};
@@ -169,25 +182,79 @@ fun GithubMarkdown(
                                         
                                         return {l: !atLeft, r: !atRight};
                                     }
+
+                                    function findHorizontalTarget(target) {
+                                        while (target && target !== document.body) {
+                                            var style = window.getComputedStyle(target);
+                                            var overflowX = style.overflowX;
+                                            if ((overflowX === 'auto' || overflowX === 'scroll') && target.scrollWidth > target.clientWidth) {
+                                                return target;
+                                            }
+                                            target = target.parentElement;
+                                        }
+                                        return null;
+                                    }
                                 
                                     var lastTarget = null;
                                     var lastState = {l: false, r: false};
+                                    var gestureState = null;
+
+                                    function stopVerticalMomentum() {
+                                        if (verticalMomentumFrame !== null) {
+                                            cancelAnimationFrame(verticalMomentumFrame);
+                                            verticalMomentumFrame = null;
+                                        }
+                                    }
+
+                                    function startVerticalMomentum(initialVelocity) {
+                                        stopVerticalMomentum();
+                                        var velocity = initialVelocity;
+                                        var lastTime = null;
+
+                                        function step(timestamp) {
+                                            if (lastTime === null) {
+                                                lastTime = timestamp;
+                                            }
+                                            var dt = Math.min(32, timestamp - lastTime);
+                                            lastTime = timestamp;
+                                            if (Math.abs(velocity) < 0.02) {
+                                                verticalMomentumFrame = null;
+                                                return;
+                                            }
+                                            window.scrollBy(0, velocity * dt);
+                                            velocity *= Math.pow(0.995, dt);
+                                            verticalMomentumFrame = requestAnimationFrame(step);
+                                        }
+
+                                        verticalMomentumFrame = requestAnimationFrame(step);
+                                    }
                                     
-                                    function update(l, r) {
+                                    function update(l, r, scrollable) {
                                         if (lastState.l !== l || lastState.r !== r) {
                                             lastState = {l: l, r: r};
-                                            AndroidScroll.updateScrollState(l, r);
                                         }
+                                        AndroidScroll.updateScrollState(l, r, scrollable);
                                     }
                                 
                                     document.addEventListener('touchstart', function(e) {
+                                        stopVerticalMomentum();
                                         var t = e.target;
                                         var found = false;
+                                        var horizontalTarget = findHorizontalTarget(t);
+                                        gestureState = horizontalTarget ? {
+                                            target: horizontalTarget,
+                                            startX: e.touches[0].clientX,
+                                            startY: e.touches[0].clientY,
+                                            lastY: e.touches[0].clientY,
+                                            lastMoveTime: performance.now(),
+                                            velocityY: 0,
+                                            mode: null
+                                        } : null;
                                         while(t && t !== document.body) {
                                             var s = checkScroll(t);
                                             if (s.l || s.r) { 
                                                  lastTarget = t;
-                                                 update(s.l, s.r);
+                                                 update(s.l, s.r, true);
                                                  found = true;
                                                  break;
                                             }
@@ -195,23 +262,55 @@ fun GithubMarkdown(
                                         }
                                         if (!found) {
                                             lastTarget = null;
-                                            update(false, false);
+                                            update(false, false, false);
                                         }
                                     }, {passive: true});
                                 
                                     document.addEventListener('touchmove', function(e) {
+                                        if (gestureState && standaloneWebView) {
+                                            var touch = e.touches[0];
+                                            var dx = touch.clientX - gestureState.startX;
+                                            var dy = touch.clientY - gestureState.startY;
+                                            if (!gestureState.mode && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
+                                                gestureState.mode = Math.abs(dy) > Math.abs(dx) ? 'vertical' : 'horizontal';
+                                            }
+                                            if (gestureState.mode === 'vertical') {
+                                                var now = performance.now();
+                                                var deltaY = gestureState.lastY - touch.clientY;
+                                                var dt = Math.max(1, now - gestureState.lastMoveTime);
+                                                gestureState.velocityY = deltaY / dt;
+                                                if (deltaY !== 0) {
+                                                    window.scrollBy(0, deltaY);
+                                                }
+                                                gestureState.lastY = touch.clientY;
+                                                gestureState.lastMoveTime = now;
+                                                e.preventDefault();
+                                                return;
+                                            }
+                                        }
                                         if (lastTarget) {
                                              var s = checkScroll(lastTarget);
-                                             update(s.l, s.r);
+                                             update(s.l, s.r, true);
                                         }
-                                    }, {passive: true});
+                                    }, {passive: false});
                                     
                                     document.addEventListener('scroll', function(e) {
                                         if (lastTarget && (e.target === lastTarget || e.target.contains(lastTarget))) {
                                               var s = checkScroll(lastTarget);
-                                              update(s.l, s.r);
+                                              update(s.l, s.r, true);
                                         }
                                     }, {passive: true, capture: true});
+
+                                    document.addEventListener('touchend', function() {
+                                        if (gestureState && gestureState.mode === 'vertical' && standaloneWebView) {
+                                            startVerticalMomentum(gestureState.velocityY);
+                                        }
+                                        gestureState = null;
+                                    }, {passive: true});
+
+                                    document.addEventListener('touchcancel', function() {
+                                        gestureState = null;
+                                    }, {passive: true});
                                 })();
                             """.trimIndent()
                             view.evaluateJavascript(js, null)
@@ -268,6 +367,7 @@ fun GithubMarkdown(
                         private var isHorizontalScrollLocked = false
                         private var initialDownX = 0f
                         private var initialDownY = 0f
+                        private val standaloneWebView = fillHeight
 
                         @SuppressLint("ClickableViewAccessibility")
                         override fun onTouch(v: View, event: MotionEvent): Boolean {
@@ -276,18 +376,53 @@ fun GithubMarkdown(
                                     initialDownX = event.x
                                     initialDownY = event.y
                                     isHorizontalScrollLocked = false
-                                    v.parent.requestDisallowInterceptTouchEvent(true)
+                                    scrollInterface.beginTouch()
+                                    v.parent.requestDisallowInterceptTouchEvent(!standaloneWebView)
                                 }
 
                                 MotionEvent.ACTION_MOVE -> {
+                                    if (standaloneWebView) {
+                                        val dx = event.x - initialDownX
+                                        val dy = event.y - initialDownY
+                                        val absDx = abs(dx)
+                                        val absDy = abs(dy)
+                                        if (absDx < touchSlop && absDy < touchSlop) {
+                                            return false
+                                        }
+                                        if (absDy >= absDx) {
+                                            v.parent.requestDisallowInterceptTouchEvent(true)
+                                        } else {
+                                            val shouldKeepInWebView = if (!scrollInterface.targetResolved) {
+                                                preferWebViewHorizontalGestures
+                                            } else {
+                                                scrollInterface.hasScrollableTarget
+                                            }
+                                            v.parent.requestDisallowInterceptTouchEvent(shouldKeepInWebView)
+                                        }
+                                        return false
+                                    }
                                     if (isHorizontalScrollLocked) {
                                         v.parent.requestDisallowInterceptTouchEvent(true)
                                     } else {
                                         val dx = event.x - initialDownX
                                         val dy = event.y - initialDownY
-                                        if (abs(dx) > abs(dy)) {
+                                        val absDx = abs(dx)
+                                        val absDy = abs(dy)
+                                        if (absDx < touchSlop && absDy < touchSlop) {
+                                            v.parent.requestDisallowInterceptTouchEvent(true)
+                                            return false
+                                        }
+
+                                        if (absDx > absDy) {
+                                            if (preferWebViewHorizontalGestures) {
+                                                isHorizontalScrollLocked = true
+                                                v.parent.requestDisallowInterceptTouchEvent(true)
+                                                return false
+                                            }
                                             val canScroll = if (dx < 0) scrollInterface.canScrollRight else scrollInterface.canScrollLeft
-                                            if (canScroll) {
+                                            if (!scrollInterface.targetResolved) {
+                                                v.parent.requestDisallowInterceptTouchEvent(true)
+                                            } else if (scrollInterface.hasScrollableTarget && canScroll) {
                                                 isHorizontalScrollLocked = true
                                                 v.parent.requestDisallowInterceptTouchEvent(true)
                                             } else {
@@ -295,7 +430,6 @@ fun GithubMarkdown(
                                             }
                                         } else {
                                             v.parent.requestDisallowInterceptTouchEvent(false)
-                                            return true
                                         }
                                     }
                                 }
@@ -312,6 +446,10 @@ fun GithubMarkdown(
                         "https://appassets.androidplatform.net", html,
                         "text/html", StandardCharsets.UTF_8.name(), null
                     )
+                    tag = WebViewRenderState(
+                        html = html,
+                        textZoom = newTextZoom
+                    )
                 } catch (e: Throwable) {
                     Log.e("GithubMarkdown", "WebView setup failed", e)
                 }
@@ -321,12 +459,23 @@ fun GithubMarkdown(
         },
         update = { frameLayout ->
             val webView = frameLayout.getChildAt(0) as? WebView ?: return@AndroidView
-            webView.settings.textZoom = newTextZoom
-            onLoadingChange(true)
-            webView.loadDataWithBaseURL(
-                "https://appassets.androidplatform.net", html,
-                "text/html", StandardCharsets.UTF_8.name(), null
-            )
+            val previousState = webView.tag as? WebViewRenderState
+            if (previousState?.textZoom != newTextZoom) {
+                webView.settings.textZoom = newTextZoom
+            }
+            if (previousState?.html != html) {
+                onLoadingChange(true)
+                webView.loadDataWithBaseURL(
+                    "https://appassets.androidplatform.net", html,
+                    "text/html", StandardCharsets.UTF_8.name(), null
+                )
+                webView.tag = WebViewRenderState(
+                    html = html,
+                    textZoom = newTextZoom
+                )
+            } else if (previousState.textZoom != newTextZoom) {
+                webView.tag = previousState.copy(textZoom = newTextZoom)
+            }
         },
         onRelease = { frameLayout ->
             val webView = frameLayout.getChildAt(0) as? WebView
@@ -336,22 +485,37 @@ fun GithubMarkdown(
                 destroy()
             }
         },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .wrapContentHeight()
+            .then(if (fillHeight) Modifier else Modifier.wrapContentHeight())
             .clipToBounds(),
     )
 }
 
 class MarkdownScrollInterface {
     @Volatile
+    var targetResolved = false
+
+    @Volatile
+    var hasScrollableTarget = false
+
+    @Volatile
     var canScrollLeft = false
 
     @Volatile
     var canScrollRight = false
 
+    fun beginTouch() {
+        targetResolved = false
+        hasScrollableTarget = false
+        canScrollLeft = false
+        canScrollRight = false
+    }
+
     @JavascriptInterface
-    fun updateScrollState(left: Boolean, right: Boolean) {
+    fun updateScrollState(left: Boolean, right: Boolean, scrollable: Boolean) {
+        targetResolved = true
+        hasScrollableTarget = scrollable
         canScrollLeft = left
         canScrollRight = right
     }

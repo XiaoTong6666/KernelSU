@@ -68,7 +68,8 @@ fun ModuleRepoScreen() {
 fun ModuleRepoDetailScreen(module: RepoModuleArg) {
     val navigator = LocalNavigator.current
     val uriHandler = LocalUriHandler.current
-    var readmeHtml by remember(module.moduleId) { mutableStateOf<String?>(null) }
+    var readmeContent by remember(module.moduleId) { mutableStateOf<String?>(null) }
+    var readmeIsMarkdown by remember(module.moduleId) { mutableStateOf(false) }
     var readmeLoaded by remember(module.moduleId) { mutableStateOf(false) }
     var detailReleases by remember(module.moduleId) { mutableStateOf<List<ReleaseArg>>(emptyList()) }
     var webUrl by remember(module.moduleId) { mutableStateOf("https://modules.kernelsu.org/module/${module.moduleId}") }
@@ -80,7 +81,9 @@ fun ModuleRepoDetailScreen(module: RepoModuleArg) {
                 runCatching {
                     val detail = fetchModuleDetail(module.moduleId)
                     if (detail != null) {
-                        readmeHtml = detail.readmeHtml
+                        val rawReadme = detail.readme.takeIf { it.isNotBlank() }
+                        readmeContent = rawReadme ?: detail.readmeHtml.takeIf { it.isNotBlank() }
+                        readmeIsMarkdown = rawReadme != null
                         if (detail.url.isNotEmpty() && !detail.url.equals("null")) {
                             webUrl = detail.url
                         }
@@ -113,7 +116,8 @@ fun ModuleRepoDetailScreen(module: RepoModuleArg) {
 
     val state = ModuleRepoDetailUiState(
         module = module,
-        readmeHtml = readmeHtml,
+        readmeContent = readmeContent,
+        readmeIsMarkdown = readmeIsMarkdown,
         readmeLoaded = readmeLoaded,
         detailReleases = detailReleases,
         webUrl = webUrl,

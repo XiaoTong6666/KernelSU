@@ -497,6 +497,10 @@ input[type="checkbox"] {
 
 .markdown-body .highlight {
   margin-bottom: 16px;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .markdown-body .highlight pre {
@@ -504,13 +508,23 @@ input[type="checkbox"] {
   word-break: normal;
 }
 
+.markdown-body .overflow-auto {
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
 .markdown-body .highlight pre, .markdown-body pre {
   padding: 16px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: visible;
   font-size: 85%;
   line-height: 1.45;
   background-color: var(--pre-background);
   border-radius: 6px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 
 .markdown-body pre code, .markdown-body pre tt {
