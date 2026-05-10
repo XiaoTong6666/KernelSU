@@ -3,6 +3,8 @@ package me.weishu.kernelsu.ui.screen.modulerepo
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
+import android.util.Log
+import android.view.MotionEvent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.tween
@@ -44,10 +46,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,6 +60,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -76,6 +79,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import me.weishu.kernelsu.R
 import me.weishu.kernelsu.ui.component.markdown.GithubMarkdown
+import me.weishu.kernelsu.ui.component.markdown.MarkdownBlockBound
 import me.weishu.kernelsu.ui.component.ListPopupDefaults
 import me.weishu.kernelsu.ui.component.SearchStatus
 import me.weishu.kernelsu.ui.component.dialog.ConfirmDialogHandle
@@ -125,6 +129,8 @@ import top.yukonga.miuix.kmp.utils.PressFeedbackType
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
 import java.text.Collator
+
+private const val README_PAGER_TAG = "ModuleRepoMiuix"
 
 @SuppressLint("LocalContextGetResourceValueCall")
 @Composable
@@ -531,9 +537,15 @@ fun ModuleRepoScreenMiuix(
 private fun ReadmePage(
     readmeHtml: String?,
     readmeLoaded: Boolean,
-    innerPadding: PaddingValues, scrollBehavior: ScrollBehavior, backdrop: LayerBackdrop?
+    innerPadding: PaddingValues,
+    scrollBehavior: ScrollBehavior,
+    backdrop: LayerBackdrop?,
+    onCodeBlockTouchChange: (Boolean) -> Unit,
 ) {
     val layoutDirection = LocalLayoutDirection.current
+    var codeBlockBounds by remember { mutableStateOf<List<MarkdownBlockBound>>(emptyList()) }
+    var touchStartedInCodeBlock by remember { mutableStateOf(false) }
+
     Box(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) {
         LazyColumn(
             modifier = Modifier
@@ -573,10 +585,68 @@ private fun ReadmePage(
                 ) {
                     Column {
                         Spacer(Modifier.height(6.dp))
-                        Card(
-                            modifier = Modifier.padding(horizontal = 12.dp),
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp)
+                                .clip(miuixShape(16.dp))
+                                .background(
+                                    color = colorScheme.surfaceContainer,
+                                    shape = miuixShape(16.dp),
+                                )
+                                .onGloballyPositioned { coordinates ->
+                                    val size = coordinates.size
+                                    val pos = coordinates.positionInWindow()
+                                    Log.d(
+                                        README_PAGER_TAG,
+                                        "readme card layout height=${size.height} width=${size.width} windowY=${pos.y}"
+                                    )
+                                }
+                                .pointerInteropFilter { event ->
+                                    val inCodeBlock = codeBlockBounds.any { bound ->
+                                        event.y >= bound.top && event.y <= bound.bottom
+                                    }
+                                    when (event.actionMasked) {
+                                        MotionEvent.ACTION_DOWN -> {
+                                            touchStartedInCodeBlock = inCodeBlock
+                                            if (touchStartedInCodeBlock) {
+                                                onCodeBlockTouchChange(true)
+                                            }
+                                            Log.d(
+                                                README_PAGER_TAG,
+                                                "readme card action=${event.actionMasked} x=${event.x} y=${event.y} inCodeBlock=$inCodeBlock"
+                                            )
+                                        }
+
+                                        MotionEvent.ACTION_MOVE -> {
+                                            Log.d(
+                                                README_PAGER_TAG,
+                                                "readme card action=${event.actionMasked} x=${event.x} y=${event.y} inCodeBlock=$inCodeBlock startedInCodeBlock=$touchStartedInCodeBlock"
+                                            )
+                                        }
+
+                                        MotionEvent.ACTION_UP,
+                                        MotionEvent.ACTION_CANCEL -> {
+                                            Log.d(
+                                                README_PAGER_TAG,
+                                                "readme card action=${event.actionMasked} x=${event.x} y=${event.y} startedInCodeBlock=$touchStartedInCodeBlock"
+                                            )
+                                            if (touchStartedInCodeBlock) {
+                                                onCodeBlockTouchChange(false)
+                                            }
+                                            touchStartedInCodeBlock = false
+                                        }
+                                    }
+                                    false
+                                },
                         ) {
-                            GithubMarkdown(content = readmeHtml!!, onLoadingChange = { isLoading = it })
+                            GithubMarkdown(
+                                content = readmeHtml!!,
+                                onLoadingChange = { isLoading = it },
+                                onCodeBlockTouchChange = { childSaysCodeBlock ->
+                                    onCodeBlockTouchChange(childSaysCodeBlock || touchStartedInCodeBlock)
+                                },
+                                onCodeBlockBoundsChange = { codeBlockBounds = it },
+                            )
                         }
                     }
                 }
@@ -985,6 +1055,11 @@ fun ModuleRepoDetailScreenMiuix(
         stringResource(R.string.tab_readme), stringResource(R.string.tab_releases), stringResource(R.string.tab_info)
     )
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabs.size })
+    var readmeCodeBlockTouchActive by remember { mutableStateOf(false) }
+    val pagerScrollEnabled = !(pagerState.currentPage == 0 && readmeCodeBlockTouchActive)
+    LaunchedEffect(pagerState, pagerScrollEnabled) {
+        Log.d(README_PAGER_TAG, "pager page=${pagerState.currentPage} userScrollEnabled=$pagerScrollEnabled")
+    }
     val tabRowHeight by remember { mutableStateOf(40.dp) }
     var collapsedFraction by remember { mutableFloatStateOf(scrollBehavior.state.collapsedFraction) }
     LaunchedEffect(scrollBehavior.state.collapsedFraction) {
@@ -1046,6 +1121,7 @@ fun ModuleRepoDetailScreenMiuix(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = pagerScrollEnabled,
         ) { page ->
             val innerPadding = PaddingValues(
                 top = innerPadding.calculateTopPadding(),
@@ -1060,7 +1136,13 @@ fun ModuleRepoDetailScreenMiuix(
                     readmeLoaded = state.readmeLoaded,
                     innerPadding = innerPadding,
                     scrollBehavior = scrollBehavior,
-                    backdrop = backdrop
+                    backdrop = backdrop,
+                    onCodeBlockTouchChange = {
+                        if (readmeCodeBlockTouchActive != it) {
+                            Log.d(README_PAGER_TAG, "code block touch active=$it")
+                            readmeCodeBlockTouchActive = it
+                        }
+                    }
                 )
 
                 1 -> ReleasesPage(

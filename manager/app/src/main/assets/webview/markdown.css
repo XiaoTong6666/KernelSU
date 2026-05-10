@@ -513,6 +513,12 @@ input[type="checkbox"] {
   border-radius: 6px;
 }
 
+.markdown-body .overflow-auto {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 .markdown-body pre code, .markdown-body pre tt {
   display: inline;
   max-width: auto;
