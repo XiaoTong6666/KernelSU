@@ -5,8 +5,13 @@
 
 long ksu_hook_newfstatat(int orig_nr, const struct pt_regs *regs);
 long ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs);
+long ksu_hook_faccessat2(int orig_nr, const struct pt_regs *regs);
+long ksu_hook_statx(int orig_nr, const struct pt_regs *regs);
 long ksu_hook_execve(int orig_nr, const struct pt_regs *regs);
+long ksu_hook_execveat(int orig_nr, const struct pt_regs *regs);
 long ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs);
+long ksu_hook_setuid(int orig_nr, const struct pt_regs *regs);
+long ksu_hook_setreuid(int orig_nr, const struct pt_regs *regs);
 
 void ksu_stop_ksud_execve_hook(void);
 

@@ -1,11 +1,17 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/list.h>
+#include <linux/seccomp.h>
+#include <linux/sched/signal.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/version.h>
 
+#include <asm/syscall.h>
+
+#include "hook/tp_marker.h"
+#include "infra/seccomp_cache.h"
 #include "policy/allowlist.h"
 #include "manager/apk_sign.h"
 #include "klog.h" // IWYU pragma: keep
@@ -21,6 +27,30 @@ struct uid_data {
     u32 uid;
     char package[KSU_MAX_PACKAGE_NAME];
 };
+
+static void prepare_running_manager_tasks(uid_t appid)
+{
+    struct task_struct *p, *t;
+
+    read_lock(&tasklist_lock);
+    for_each_process_thread (p, t) {
+        unsigned long flags;
+
+        if (task_uid(t).val % KSU_PER_USER_RANGE != appid) {
+            continue;
+        }
+
+        ksu_set_task_tracepoint_flag(t);
+        if (lock_task_sighand(t, &flags)) {
+            if (t->seccomp.mode == SECCOMP_MODE_FILTER && t->seccomp.filter) {
+            ksu_seccomp_allow_cache(t->seccomp.filter, __NR_reboot);
+            }
+            unlock_task_sighand(t, &flags);
+        }
+        pr_info("Prepared running manager task: pid=%d uid=%d comm=%s\n", t->pid, task_uid(t).val, t->comm);
+    }
+    read_unlock(&tasklist_lock);
+}
 
 static void crown_manager(const char *apk, struct list_head *uid_data)
 {
@@ -39,6 +69,7 @@ static void crown_manager(const char *apk, struct list_head *uid_data)
         if (strncmp(np->package, pkg, KSU_MAX_PACKAGE_NAME) == 0) {
             pr_info("Crowning manager: %s(uid=%d)\n", pkg, np->uid);
             ksu_set_manager_appid(np->uid);
+            prepare_running_manager_tasks(np->uid);
             break;
         }
     }

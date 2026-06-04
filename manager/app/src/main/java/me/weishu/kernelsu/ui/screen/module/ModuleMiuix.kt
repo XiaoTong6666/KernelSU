@@ -99,6 +99,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import me.weishu.kernelsu.R
+import me.weishu.kernelsu.data.model.KpmModule
 import me.weishu.kernelsu.data.model.Module
 import me.weishu.kernelsu.data.model.ModuleUpdateInfo
 import me.weishu.kernelsu.ui.component.ListPopupDefaults
@@ -294,7 +295,7 @@ fun ModulePagerMiuix(
                                         ListPopupColumn {
                                             DropdownImpl(
                                                 text = stringResource(R.string.module_sort_action_first),
-                                                optionSize = 2,
+                                                optionSize = 3,
                                                 isSelected = uiState.sortActionFirst,
                                                 onSelectedIndexChange = {
                                                     actions.onToggleSortActionFirst()
@@ -304,13 +305,23 @@ fun ModulePagerMiuix(
                                             )
                                             DropdownImpl(
                                                 text = stringResource(R.string.module_sort_enabled_first),
-                                                optionSize = 2,
+                                                optionSize = 3,
                                                 isSelected = uiState.sortEnabledFirst,
                                                 onSelectedIndexChange = {
                                                     actions.onToggleSortEnabledFirst()
                                                     showTopPopup.value = false
                                                 },
                                                 index = 1
+                                            )
+                                            DropdownImpl(
+                                                text = stringResource(R.string.kpm_load),
+                                                optionSize = 3,
+                                                isSelected = false,
+                                                onSelectedIndexChange = {
+                                                    actions.onOpenKpmLoader()
+                                                    showTopPopup.value = false
+                                                },
+                                                index = 2
                                             )
                                         }
                                     }
@@ -441,6 +452,7 @@ fun ModulePagerMiuix(
                         .fillMaxSize()
                         .overScrollVertical(),
                     modules = uiState.searchResults,
+                    kpmModules = emptyList(),
                     updateInfoMap = uiState.updateInfo,
                     actions = actions,
                     onModuleAddShortcut = ::onModuleAddShortcut,
@@ -506,7 +518,7 @@ fun ModulePagerMiuix(
                     refreshTexts = refreshTexts,
                     contentPadding = contentPadding,
                 ) {
-                    if (modules.isEmpty()) {
+                    if (modules.isEmpty() && uiState.kpmModules.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -534,6 +546,7 @@ fun ModulePagerMiuix(
                                     .nestedScroll(scrollBehavior.nestedScrollConnection)
                                     .nestedScroll(nestedScrollConnection),
                                 modules = modules,
+                                kpmModules = uiState.kpmModules,
                                 updateInfoMap = uiState.updateInfo,
                                 actions = actions,
                                 onModuleAddShortcut = { module, type ->
@@ -673,6 +686,7 @@ private fun ModuleShortcutDialog(
 private fun ModuleList(
     modifier: Modifier = Modifier,
     modules: List<Module>,
+    kpmModules: List<KpmModule> = emptyList(),
     updateInfoMap: Map<String, ModuleUpdateInfo>,
     actions: ModuleActions,
     onModuleAddShortcut: (Module, ShortcutType) -> Unit,
@@ -733,6 +747,99 @@ private fun ModuleList(
             }
 
             content()
+        }
+
+        if (kpmModules.isNotEmpty()) {
+            item("kpm-header") {
+                Text(
+                    text = stringResource(R.string.kpm_loaded),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight(700),
+                    color = colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
+            items(
+                items = kpmModules,
+                key = { it.name },
+                contentType = { "kpm" }
+            ) { module ->
+                KpmItem(module = module, onUnload = { actions.onUnloadKpm(module) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun KpmItem(
+    module: KpmModule,
+    onUnload: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 12.dp),
+        insideMargin = PaddingValues(16.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 4.dp)
+            ) {
+                Text(
+                    text = module.name,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight(550),
+                    color = colorScheme.onSurface,
+                )
+                if (module.version.isNotBlank()) {
+                    Text(
+                        text = "${stringResource(R.string.module_version)}: ${module.version}",
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 2.dp),
+                        fontWeight = FontWeight(550),
+                        color = colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+                if (module.author.isNotBlank()) {
+                    Text(
+                        text = "${stringResource(R.string.module_author)}: ${module.author}",
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 1.dp),
+                        fontWeight = FontWeight(550),
+                        color = colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+
+            TextButton(
+                text = stringResource(R.string.uninstall),
+                onClick = onUnload,
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+            )
+        }
+
+        if (module.description.isNotBlank()) {
+            Text(
+                text = module.description,
+                fontSize = 14.sp,
+                color = colorScheme.onSurfaceVariantSummary,
+            )
+        }
+
+        if (module.args.isNotBlank()) {
+            Text(
+                text = "${stringResource(R.string.kpm_args)}: ${module.args}",
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 6.dp),
+                fontWeight = FontWeight(550),
+                color = colorScheme.onSurfaceVariantSummary,
+            )
         }
     }
 }

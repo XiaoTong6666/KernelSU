@@ -51,6 +51,17 @@ kernelsu-objs += feature/adb_root.o
 
 kernelsu-objs += feature/selinux_hide.o
 
+ifeq ($(CONFIG_ARM64),y)
+kernelsu-objs += kpm/relo.o
+kernelsu-objs += kpm/hook.o
+kernelsu-objs += kpm/fphook.o
+kernelsu-objs += kpm/module.o
+kernelsu-objs += kpm/kpm_ioctl.o
+kernelsu-objs += kpm/accctl.o
+kernelsu-objs += kpm/syscall.o
+kernelsu-objs += kpm/kputils.o
+endif
+
 ifdef KBUILD_EXTMOD
 ifeq ($(CONFIG_KSU_DISABLE_MANAGER),y)
 ccflags-y += -DCONFIG_KSU_DISABLE_MANAGER=1
@@ -149,5 +160,6 @@ ccflags-y += -DKSU_NEW_DCACHE_FLUSH=$(KSU_NEW_DCACHE_FLUSH)
 
 ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
+ccflags-y += -std=gnu11
 
 # Keep a new line here!! Because someone may append config

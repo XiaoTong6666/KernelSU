@@ -124,6 +124,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import me.weishu.kernelsu.R
+import me.weishu.kernelsu.data.model.KpmModule
 import me.weishu.kernelsu.data.model.Module
 import me.weishu.kernelsu.data.model.ModuleUpdateInfo
 import me.weishu.kernelsu.ui.component.dialog.rememberConfirmDialog
@@ -304,6 +305,15 @@ fun ModulePagerMaterial(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
                                     actions.onToggleSortEnabledFirst()
+                                    showDropdown = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.kpm_load)) },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                                    actions.onOpenKpmLoader()
+                                    showDropdown = false
                                 }
                             )
                         }
@@ -319,6 +329,7 @@ fun ModulePagerMaterial(
                         modifier = Modifier.fillMaxSize(),
                         listState = searchListState,
                         displayModules = uiState.searchResults,
+                        kpmModules = emptyList(),
                         updateInfoMap = uiState.updateInfo,
                         actions = actions,
                         onClickModule = { module ->
@@ -413,6 +424,7 @@ fun ModulePagerMaterial(
                 modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
                 listState = listState,
                 displayModules = uiState.moduleList,
+                kpmModules = uiState.kpmModules,
                 updateInfoMap = uiState.updateInfo,
                 actions = actions,
                 onClickModule = { module ->
@@ -448,6 +460,7 @@ private fun ModuleList(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     displayModules: List<Module>,
+    kpmModules: List<KpmModule> = emptyList(),
     updateInfoMap: Map<String, ModuleUpdateInfo>,
     actions: ModuleActions,
     onClickModule: (Module) -> Unit,
@@ -466,6 +479,22 @@ private fun ModuleList(
             bottom = 16.dp + bottomInnerPadding + 56.dp + 16.dp
         ),
     ) {
+        if (displayModules.isEmpty() && kpmModules.isEmpty()) {
+            item("empty") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.module_empty),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+
         items(displayModules, key = { it.id }, contentType = { "module" }) { module ->
             val scope = rememberCoroutineScope()
             val moduleUpdateInfo = updateInfoMap[module.id] ?: ModuleUpdateInfo.Empty
@@ -495,6 +524,97 @@ private fun ModuleList(
                 onExecuteAction = { actions.onExecuteModuleAction(module) },
                 closeSearch = { closeSearch() }
             )
+        }
+
+        if (kpmModules.isNotEmpty()) {
+            item("kpm-header") {
+                Text(
+                    text = stringResource(R.string.kpm_loaded),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                )
+            }
+
+            items(kpmModules, key = { it.name }, contentType = { "kpm" }) { module ->
+                KpmItem(module = module, onUnloadClicked = { actions.onUnloadKpm(module) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun KpmItem(
+    module: KpmModule,
+    onUnloadClicked: () -> Unit,
+) {
+    TonalCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(22.dp, 18.dp, 22.dp, 12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = module.name,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    if (module.version.isNotBlank()) {
+                        Text(
+                            text = "${stringResource(R.string.module_version)}: ${module.version}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (module.author.isNotBlank()) {
+                        Text(
+                            text = "${stringResource(R.string.module_author)}: ${module.author}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                FilledTonalButton(
+                    modifier = Modifier.defaultMinSize(52.dp, 32.dp),
+                    onClick = onUnloadClicked,
+                    contentPadding = ButtonDefaults.TextButtonContentPadding,
+                ) {
+                    Icon(
+                        modifier = Modifier.size(20.dp),
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = null,
+                    )
+                    Text(
+                        modifier = Modifier.padding(start = 7.dp),
+                        fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
+                        fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                        text = stringResource(R.string.uninstall)
+                    )
+                }
+            }
+
+            if (module.description.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = module.description,
+                    color = MaterialTheme.colorScheme.outline,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
+            if (module.args.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "${stringResource(R.string.kpm_args)}: ${module.args}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }

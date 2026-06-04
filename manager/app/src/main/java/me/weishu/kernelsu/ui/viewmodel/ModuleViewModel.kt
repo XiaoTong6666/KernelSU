@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.weishu.kernelsu.Natives
 import me.weishu.kernelsu.R
+import me.weishu.kernelsu.data.model.KpmModule
 import me.weishu.kernelsu.data.model.Module
 import me.weishu.kernelsu.data.model.ModuleUpdateInfo
 import me.weishu.kernelsu.data.repository.ModuleRepository
@@ -32,8 +33,11 @@ import me.weishu.kernelsu.ui.screen.module.ModuleConfirmRequest
 import me.weishu.kernelsu.ui.screen.module.ModuleEffect
 import me.weishu.kernelsu.ui.screen.module.ModuleUiState
 import me.weishu.kernelsu.ui.util.hasMagisk
+import me.weishu.kernelsu.ui.util.listKpms
+import me.weishu.kernelsu.ui.util.loadKpm as loadKpmUtil
 import me.weishu.kernelsu.ui.util.module.fetchModuleDetail
 import me.weishu.kernelsu.ui.util.module.fetchReleaseDescriptionHtml
+import me.weishu.kernelsu.ui.util.unloadKpm as unloadKpmUtil
 import okhttp3.Request
 import java.text.Collator
 import java.util.Locale
@@ -227,11 +231,13 @@ class ModuleViewModel(
                 emptyList()
             }
         }
+        val parsedKpms = withContext(Dispatchers.IO) { listKpms() }
 
         withContext(Dispatchers.Main) {
             _uiState.update {
                 it.copy(
                     modules = parsedModules,
+                    kpmModules = parsedKpms,
                 )
             }
             // Trigger recalculation of moduleList
@@ -418,6 +424,42 @@ class ModuleViewModel(
                     effect = ModuleEffect.SnackBar(
                         res.getString(
                             if (success) R.string.module_undo_uninstall_success else R.string.module_undo_uninstall_failed
+                        ).format(module.name)
+                    )
+                )
+            }
+        }
+    }
+
+    fun loadKpm(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            val success = withContext(Dispatchers.IO) { loadKpmUtil(uri) }
+            if (success) {
+                fetchModuleList(checkUpdate = false)
+            }
+            _uiState.update {
+                it.copy(
+                    effect = ModuleEffect.Toast(
+                        res.getString(if (success) R.string.kpm_load_success else R.string.kpm_load_failed)
+                    )
+                )
+            }
+        }
+    }
+
+    fun unloadKpm(module: KpmModule) {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            val success = withContext(Dispatchers.IO) { unloadKpmUtil(module.name) }
+            if (success) {
+                fetchModuleList(checkUpdate = false)
+            }
+            _uiState.update {
+                it.copy(
+                    effect = ModuleEffect.Toast(
+                        res.getString(
+                            if (success) R.string.kpm_unload_success else R.string.kpm_unload_failed
                         ).format(module.name)
                     )
                 )

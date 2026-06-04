@@ -22,6 +22,54 @@
 #include "hook/syscall_hook.h"
 #include "hook/syscall_event_bridge.h"
 
+static syscall_fn_t orig_sys_setresuid;
+#ifdef __NR_setuid
+static syscall_fn_t orig_sys_setuid;
+#endif
+#ifdef __NR_setreuid
+static syscall_fn_t orig_sys_setreuid;
+#endif
+
+static long __nocfi ksu_direct_hook_setresuid(const struct pt_regs *regs)
+{
+    uid_t old_uid = current_uid().val;
+    long ret = orig_sys_setresuid(regs);
+
+    if (ret < 0)
+        return ret;
+
+    ksu_handle_setresuid(old_uid, current_uid().val);
+    return ret;
+}
+
+#ifdef __NR_setuid
+static long __nocfi ksu_direct_hook_setuid(const struct pt_regs *regs)
+{
+    uid_t old_uid = current_uid().val;
+    long ret = orig_sys_setuid(regs);
+
+    if (ret < 0)
+        return ret;
+
+    ksu_handle_setresuid(old_uid, current_uid().val);
+    return ret;
+}
+#endif
+
+#ifdef __NR_setreuid
+static long __nocfi ksu_direct_hook_setreuid(const struct pt_regs *regs)
+{
+    uid_t old_uid = current_uid().val;
+    long ret = orig_sys_setreuid(regs);
+
+    if (ret < 0)
+        return ret;
+
+    ksu_handle_setresuid(old_uid, current_uid().val);
+    return ret;
+}
+#endif
+
 #ifdef CONFIG_KRETPROBES
 
 static struct kretprobe *init_kretprobe(const char *name, kretprobe_handler_t handler)
@@ -131,11 +179,29 @@ void __init ksu_syscall_hook_manager_init(void)
     syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
 #endif
 
-    // Register syscall hooks via dispatcher
-    ksu_register_syscall_hook(__NR_setresuid, ksu_hook_setresuid);
+    // Bootstrap UID transitions must work before a process is marked, so keep
+    // them on direct syscall table hooks instead of the marked-only dispatcher.
+    ksu_syscall_table_hook(__NR_setresuid, (syscall_fn_t)ksu_direct_hook_setresuid, &orig_sys_setresuid);
+#ifdef __NR_setuid
+    ksu_syscall_table_hook(__NR_setuid, (syscall_fn_t)ksu_direct_hook_setuid, &orig_sys_setuid);
+#endif
+#ifdef __NR_setreuid
+    ksu_syscall_table_hook(__NR_setreuid, (syscall_fn_t)ksu_direct_hook_setreuid, &orig_sys_setreuid);
+#endif
+
+    // Register remaining syscall hooks via dispatcher
     ksu_register_syscall_hook(__NR_execve, ksu_hook_execve);
     ksu_register_syscall_hook(__NR_newfstatat, ksu_hook_newfstatat);
     ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
+#ifdef __NR_execveat
+    ksu_register_syscall_hook(__NR_execveat, ksu_hook_execveat);
+#endif
+#ifdef __NR_statx
+    ksu_register_syscall_hook(__NR_statx, ksu_hook_statx);
+#endif
+#ifdef __NR_faccessat2
+    ksu_register_syscall_hook(__NR_faccessat2, ksu_hook_faccessat2);
+#endif
 
 #ifdef CONFIG_HAVE_SYSCALL_TRACEPOINTS
     ret = register_trace_sys_enter(ksu_sys_enter_handler, NULL);
@@ -167,10 +233,25 @@ void __exit ksu_syscall_hook_manager_exit(void)
     destroy_kretprobe(&syscall_unregfunc_rp);
 #endif
 
-    ksu_unregister_syscall_hook(__NR_setresuid);
+    ksu_syscall_table_unhook(__NR_setresuid);
+#ifdef __NR_setuid
+    ksu_syscall_table_unhook(__NR_setuid);
+#endif
+#ifdef __NR_setreuid
+    ksu_syscall_table_unhook(__NR_setreuid);
+#endif
     ksu_unregister_syscall_hook(__NR_execve);
     ksu_unregister_syscall_hook(__NR_newfstatat);
     ksu_unregister_syscall_hook(__NR_faccessat);
+#ifdef __NR_execveat
+    ksu_unregister_syscall_hook(__NR_execveat);
+#endif
+#ifdef __NR_statx
+    ksu_unregister_syscall_hook(__NR_statx);
+#endif
+#ifdef __NR_faccessat2
+    ksu_unregister_syscall_hook(__NR_faccessat2);
+#endif
 
     ksu_syscall_hook_exit();
 

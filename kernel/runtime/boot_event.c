@@ -10,6 +10,7 @@
 #include "runtime/ksud.h"
 #include "manager/manager_observer.h"
 #include "manager/throne_tracker.h"
+#include "hook/tp_marker.h"
 
 bool ksu_module_mounted __read_mostly = false;
 bool ksu_boot_completed __read_mostly = false;
@@ -27,6 +28,9 @@ void on_post_fs_data(void)
     pr_info("on_post_fs_data!\n");
 
     ksu_load_allow_list();
+    // Refresh marks after loading persisted policy so already-running app
+    // processes pick up sucompat/root eligibility without manual repair.
+    ksu_mark_running_process();
     ksu_observer_init();
     // Sanity check for safe mode only needs early-boot input samples.
     ksu_stop_input_hook_runtime();
@@ -67,5 +71,8 @@ void on_boot_completed(void)
     ksu_boot_completed = true;
     pr_info("on_boot_completed!\n");
     track_throne(true);
+    // packages.list / manager identity can change independently of the
+    // persisted allowlist; refresh marks once boot is fully up.
+    ksu_mark_running_process();
     ksu_selinux_hide_drop_backup_if_unused();
 }

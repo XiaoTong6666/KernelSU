@@ -23,6 +23,7 @@
 #include "sulog/event.h"
 
 #define SU_PATH "/system/bin/su"
+#define SU_PATH_XBIN "/system/xbin/su"
 #define SH_PATH "/system/bin/sh"
 
 bool ksu_su_compat_enabled __read_mostly = true;
@@ -71,19 +72,23 @@ static char __user *ksud_user_path(void)
     return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
 }
 
+static bool is_su_path(const char *path)
+{
+    return path && (!strcmp(path, SU_PATH) || !strcmp(path, SU_PATH_XBIN) || !strcmp(path, "su"));
+}
+
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)
 {
-    const char su[] = SU_PATH;
+    char path[sizeof(SU_PATH_XBIN)];
 
     if (!ksu_is_allow_uid_for_current(current_uid().val)) {
         return 0;
     }
 
-    char path[sizeof(su) + 1];
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path));
 
-    if (unlikely(!memcmp(path, su, sizeof(su)))) {
+    if (unlikely(is_su_path(path))) {
         pr_info("faccessat su->sh!\n");
         *filename_user = sh_user_path();
     }
@@ -93,8 +98,7 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 {
-    // const char sh[] = SH_PATH;
-    const char su[] = SU_PATH;
+    char path[sizeof(SU_PATH_XBIN)];
 
     if (!ksu_is_allow_uid_for_current(current_uid().val)) {
         return 0;
@@ -104,11 +108,10 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
         return 0;
     }
 
-    char path[sizeof(su) + 1];
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path));
 
-    if (unlikely(!memcmp(path, su, sizeof(su)))) {
+    if (unlikely(is_su_path(path))) {
         pr_info("newfstatat su->sh!\n");
         *filename_user = sh_user_path();
     }
@@ -116,13 +119,12 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
     return 0;
 }
 
-long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs)
+long ksu_handle_execve_sucompat_argv(const char __user **filename_user, const char __user *const __user *argv_user,
+                                     int orig_nr, const struct pt_regs *regs)
 {
-    const char su[] = SU_PATH;
     const char __user *fn;
-    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
     struct ksu_sulog_pending_event *pending_sucompat = NULL;
-    char path[sizeof(su) + 1];
+    char path[sizeof(SU_PATH_XBIN)];
     long ret;
     unsigned long addr;
 
@@ -143,7 +145,7 @@ long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, 
         goto do_orig_execve;
     }
 
-    if (likely(memcmp(path, su, sizeof(su))))
+    if (likely(!is_su_path(path)))
         goto do_orig_execve;
 
     pr_info("sys_execve su found\n");
@@ -169,6 +171,13 @@ long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, 
 
 do_orig_execve:
     return ksu_syscall_table[orig_nr](regs);
+}
+
+long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs)
+{
+    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
+
+    return ksu_handle_execve_sucompat_argv(filename_user, argv_user, orig_nr, regs);
 }
 
 // sucompat: permitted process can execute 'su' to gain root access.

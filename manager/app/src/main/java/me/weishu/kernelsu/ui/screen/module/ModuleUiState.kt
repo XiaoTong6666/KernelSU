@@ -2,6 +2,7 @@ package me.weishu.kernelsu.ui.screen.module
 
 import android.net.Uri
 import androidx.compose.runtime.Immutable
+import me.weishu.kernelsu.data.model.KpmModule
 import me.weishu.kernelsu.data.model.Module
 import me.weishu.kernelsu.data.model.ModuleUpdateInfo
 import me.weishu.kernelsu.ui.component.SearchStatus
@@ -45,6 +46,7 @@ data class ModuleUiState(
     val hasLoaded: Boolean = false,
     val modules: List<Module> = emptyList(),
     val moduleList: List<Module> = emptyList(),
+    val kpmModules: List<KpmModule> = emptyList(),
     val updateInfo: Map<String, ModuleUpdateInfo> = emptyMap(),
     val searchStatus: SearchStatus = SearchStatus(""),
     val searchResults: List<Module> = emptyList(),
@@ -80,4 +82,6 @@ data class ModuleActions(
     val onUndoUninstallModule: (Module) -> Unit,
     val onOpenFlash: (List<Uri>) -> Unit,
     val onExecuteModuleAction: (Module) -> Unit,
+    val onOpenKpmLoader: () -> Unit,
+    val onUnloadKpm: (KpmModule) -> Unit,
 )

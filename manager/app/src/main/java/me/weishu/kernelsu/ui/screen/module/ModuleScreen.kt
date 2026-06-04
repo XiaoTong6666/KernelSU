@@ -47,6 +47,12 @@ fun ModulePager(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { viewModel.fetchModuleList() }
 
+    val kpmLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let(viewModel::loadKpm)
+    }
+
     // Request notification permission for download progress notifications
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -65,7 +71,9 @@ fun ModulePager(
         }
 
         LifecycleResumeEffect(Unit) {
-            viewModel.fetchModuleList(checkUpdate = rawUiState.moduleList.isEmpty() || viewModel.isNeedRefresh)
+            viewModel.fetchModuleList(
+                checkUpdate = (rawUiState.moduleList.isEmpty() && rawUiState.kpmModules.isEmpty()) || viewModel.isNeedRefresh
+            )
             onPauseOrDispose {}
         }
     }
@@ -147,6 +155,12 @@ fun ModulePager(
         onExecuteModuleAction = { module ->
             navigator.push(Route.ExecuteModuleAction(module.id))
             viewModel.markNeedRefresh()
+        },
+        onOpenKpmLoader = {
+            kpmLauncher.launch("*/*")
+        },
+        onUnloadKpm = { module ->
+            viewModel.unloadKpm(module)
         },
     )
 

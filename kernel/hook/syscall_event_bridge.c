@@ -81,6 +81,42 @@ long __nocfi ksu_hook_faccessat(int orig_nr, const struct pt_regs *regs)
     return ksu_syscall_table[orig_nr](regs);
 }
 
+long __nocfi ksu_hook_faccessat2(int orig_nr, const struct pt_regs *regs)
+{
+    int *dfd;
+    const char __user **filename_user;
+    int *mode;
+    int *flags;
+
+    if (!ksu_su_compat_enabled)
+        return ksu_syscall_table[orig_nr](regs);
+
+    dfd = (int *)&PT_REGS_PARM1(regs);
+    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+    mode = (int *)&PT_REGS_PARM3(regs);
+    flags = (int *)&PT_REGS_SYSCALL_PARM4(regs);
+    ksu_handle_faccessat(dfd, filename_user, mode, flags);
+
+    return ksu_syscall_table[orig_nr](regs);
+}
+
+long __nocfi ksu_hook_statx(int orig_nr, const struct pt_regs *regs)
+{
+    int *dfd;
+    const char __user **filename_user;
+    int *flags;
+
+    if (!ksu_su_compat_enabled)
+        return ksu_syscall_table[orig_nr](regs);
+
+    dfd = (int *)&PT_REGS_PARM1(regs);
+    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+    flags = (int *)&PT_REGS_PARM3(regs);
+    ksu_handle_stat(dfd, filename_user, flags);
+
+    return ksu_syscall_table[orig_nr](regs);
+}
+
 DEFINE_STATIC_KEY_TRUE(ksud_execve_key);
 
 void ksu_stop_ksud_execve_hook()
@@ -119,7 +155,42 @@ long __nocfi ksu_hook_execve(int orig_nr, const struct pt_regs *regs)
     return ret;
 }
 
+long __nocfi ksu_hook_execveat(int orig_nr, const struct pt_regs *regs)
+{
+    const char __user **filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM3(regs);
+
+    if (!ksu_su_compat_enabled)
+        return ksu_syscall_table[orig_nr](regs);
+
+    return ksu_handle_execve_sucompat_argv(filename_user, argv_user, orig_nr, regs);
+}
+
 long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
+{
+    uid_t old_uid = current_uid().val;
+    long ret = ksu_syscall_table[orig_nr](regs);
+
+    if (ret < 0)
+        return ret;
+
+    ksu_handle_setresuid(old_uid, current_uid().val);
+    return ret;
+}
+
+long __nocfi ksu_hook_setuid(int orig_nr, const struct pt_regs *regs)
+{
+    uid_t old_uid = current_uid().val;
+    long ret = ksu_syscall_table[orig_nr](regs);
+
+    if (ret < 0)
+        return ret;
+
+    ksu_handle_setresuid(old_uid, current_uid().val);
+    return ret;
+}
+
+long __nocfi ksu_hook_setreuid(int orig_nr, const struct pt_regs *regs)
 {
     uid_t old_uid = current_uid().val;
     long ret = ksu_syscall_table[orig_nr](regs);

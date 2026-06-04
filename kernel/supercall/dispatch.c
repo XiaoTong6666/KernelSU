@@ -21,6 +21,7 @@
 #include "sulog/event.h"
 #include "sulog/fd.h"
 #include "supercall/supercall.h"
+#include "kpm/kpm_ioctl.h"
 
 static int do_grant_root(void __user *arg)
 {
@@ -787,6 +788,36 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
         .cmd = KSU_IOCTL_GET_SULOG_FD,
         .name = "GET_SULOG_FD",
         .handler = do_get_sulog_fd,
+        .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_KPM_LOAD,
+        .name = "KPM_LOAD",
+        .handler = do_kpm_load,
+        .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_KPM_UNLOAD,
+        .name = "KPM_UNLOAD",
+        .handler = do_kpm_unload,
+        .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_KPM_CONTROL,
+        .name = "KPM_CONTROL",
+        .handler = do_kpm_control,
+        .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_KPM_LIST,
+        .name = "KPM_LIST",
+        .handler = do_kpm_list,
+        .perm_check = only_root
+    },
+    {
+        .cmd = KSU_IOCTL_KPM_INFO,
+        .name = "KPM_INFO",
+        .handler = do_kpm_info,
         .perm_check = only_root
     },
     {

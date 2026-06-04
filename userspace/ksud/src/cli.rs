@@ -27,6 +27,12 @@ enum Commands {
         command: Module,
     },
 
+    /// Manage kernel patch modules
+    Kpm {
+        #[command(subcommand)]
+        command: Kpm,
+    },
+
     /// Trigger `post-fs-data` event
     PostFsData,
 
@@ -316,6 +322,36 @@ enum Module {
 }
 
 #[derive(clap::Subcommand, Debug)]
+enum Kpm {
+    /// Load a KPM from a local file
+    Load {
+        /// KPM file path
+        path: String,
+        /// KPM init arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+        args: Vec<String>,
+    },
+
+    /// Unload a loaded KPM by name
+    Unload {
+        /// KPM name
+        name: String,
+    },
+
+    /// List loaded KPMs as JSON
+    List,
+
+    /// Invoke ctl0 on a loaded KPM
+    Control {
+        /// KPM name
+        name: String,
+        /// ctl0 arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
+        args: Vec<String>,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
 enum ModuleConfigCmd {
     /// Get a config value
     Get {
@@ -482,7 +518,7 @@ pub fn run() -> Result<()> {
 
     // the kernel executes su with argv[0] = "su" and replace it with us
     let arg0 = std::env::args().next().unwrap_or_default();
-    if arg0 == "su" || arg0 == "/system/bin/su" {
+    if arg0 == "su" || arg0 == "/system/bin/su" || arg0 == "/system/xbin/su" {
         return crate::su::root_shell();
     }
 
@@ -608,6 +644,18 @@ pub fn run() -> Result<()> {
                 }
             }
         }
+        Commands::Kpm { command } => match command {
+            Kpm::Load { path, args } => {
+                let args = crate::kpm::validate_args(&args)?;
+                crate::kpm::load(&path, &args)
+            }
+            Kpm::Unload { name } => crate::kpm::unload(&name),
+            Kpm::List => crate::kpm::list(),
+            Kpm::Control { name, args } => {
+                let args = crate::kpm::validate_args(&args)?;
+                crate::kpm::control(&name, &args)
+            }
+        },
         Commands::Install { libadbroot } => utils::install(libadbroot),
         Commands::Unload => crate::unload::unload(),
         Commands::Uninstall { package_name } => utils::uninstall(&package_name),

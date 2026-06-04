@@ -164,4 +164,33 @@ static const __u32 KSU_IOCTL_ADD_TRY_UMOUNT = _IOC(_IOC_WRITE, 'K', 18, 0);
 static const __u32 KSU_IOCTL_SET_INIT_PGRP = _IO('K', 19);
 static const __u32 KSU_IOCTL_GET_SULOG_FD = _IOW('K', 20, struct ksu_get_sulog_fd_cmd);
 
+/* KPM (Kernel Patch Module) commands */
+struct kpm_load_cmd {
+    char path[256];
+    char args[1024];
+};
+struct kpm_unload_cmd {
+    char name[64];
+};
+struct kpm_control_cmd {
+    char name[64];
+    char ctl_args[1024];
+    __aligned_u64 out_msg;
+    __s32 out_len;
+};
+struct kpm_list_cmd {
+    __aligned_u64 out_buf;
+    __s32 out_len;
+};
+struct kpm_info_cmd {
+    char name[64];
+    __aligned_u64 out_buf;
+    __s32 out_len;
+};
+static const __u32 KSU_IOCTL_KPM_LOAD = _IOW('K', 21, struct kpm_load_cmd);
+static const __u32 KSU_IOCTL_KPM_UNLOAD = _IOW('K', 22, struct kpm_unload_cmd);
+static const __u32 KSU_IOCTL_KPM_CONTROL = _IOWR('K', 23, struct kpm_control_cmd);
+static const __u32 KSU_IOCTL_KPM_LIST = _IOWR('K', 24, struct kpm_list_cmd);
+static const __u32 KSU_IOCTL_KPM_INFO = _IOWR('K', 25, struct kpm_info_cmd);
+
 #endif

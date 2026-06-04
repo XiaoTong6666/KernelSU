@@ -249,3 +249,78 @@ pub fn set_init_pgrp() -> std::io::Result<()> {
     )?;
     Ok(())
 }
+
+fn fill_cstr(dst: &mut [std::ffi::c_char], src: &str) -> std::io::Result<()> {
+    if src.len() >= dst.len() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "string too long",
+        ));
+    }
+
+    dst.fill(0);
+    for (idx, byte) in src.bytes().enumerate() {
+        dst[idx] = byte as std::ffi::c_char;
+    }
+    Ok(())
+}
+
+fn read_kernel_string(buf: &[u8], result_len: i32) -> String {
+    let used_len = if result_len > 0 {
+        result_len as usize
+    } else {
+        buf.len()
+    };
+    let end = buf
+        .iter()
+        .take(used_len.min(buf.len()))
+        .position(|&b| b == 0)
+        .unwrap_or(used_len.min(buf.len()));
+    String::from_utf8_lossy(&buf[..end]).into_owned()
+}
+
+pub fn kpm_load(path: &str, args: &str) -> std::io::Result<()> {
+    let mut cmd: ksu_uapi::kpm_load_cmd = unsafe { std::mem::zeroed() };
+    fill_cstr(&mut cmd.path, path)?;
+    fill_cstr(&mut cmd.args, args)?;
+    ksuctl(ksu_uapi::KSU_IOCTL_KPM_LOAD, &raw mut cmd)?;
+    Ok(())
+}
+
+pub fn kpm_unload(name: &str) -> std::io::Result<()> {
+    let mut cmd: ksu_uapi::kpm_unload_cmd = unsafe { std::mem::zeroed() };
+    fill_cstr(&mut cmd.name, name)?;
+    ksuctl(ksu_uapi::KSU_IOCTL_KPM_UNLOAD, &raw mut cmd)?;
+    Ok(())
+}
+
+pub fn kpm_control(name: &str, args: &str) -> std::io::Result<String> {
+    let mut out_buf = vec![0_u8; 4096];
+    let mut cmd: ksu_uapi::kpm_control_cmd = unsafe { std::mem::zeroed() };
+    fill_cstr(&mut cmd.name, name)?;
+    fill_cstr(&mut cmd.ctl_args, args)?;
+    cmd.out_msg = out_buf.as_mut_ptr() as u64;
+    cmd.out_len = out_buf.len() as i32;
+    let result = ksuctl(ksu_uapi::KSU_IOCTL_KPM_CONTROL, &raw mut cmd)?;
+    Ok(read_kernel_string(&out_buf, result))
+}
+
+pub fn kpm_list() -> std::io::Result<String> {
+    let mut out_buf = vec![0_u8; 8192];
+    let mut cmd = ksu_uapi::kpm_list_cmd {
+        out_buf: out_buf.as_mut_ptr() as u64,
+        out_len: out_buf.len() as i32,
+    };
+    let result = ksuctl(ksu_uapi::KSU_IOCTL_KPM_LIST, &raw mut cmd)?;
+    Ok(read_kernel_string(&out_buf, result))
+}
+
+pub fn kpm_info(name: &str) -> std::io::Result<String> {
+    let mut out_buf = vec![0_u8; 4096];
+    let mut cmd: ksu_uapi::kpm_info_cmd = unsafe { std::mem::zeroed() };
+    fill_cstr(&mut cmd.name, name)?;
+    cmd.out_buf = out_buf.as_mut_ptr() as u64;
+    cmd.out_len = out_buf.len() as i32;
+    let result = ksuctl(ksu_uapi::KSU_IOCTL_KPM_INFO, &raw mut cmd)?;
+    Ok(read_kernel_string(&out_buf, result))
+}

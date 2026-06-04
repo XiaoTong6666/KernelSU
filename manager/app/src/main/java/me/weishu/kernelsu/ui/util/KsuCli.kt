@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.parcelize.Parcelize
 import me.weishu.kernelsu.BuildConfig
 import me.weishu.kernelsu.Natives
+import me.weishu.kernelsu.data.model.KpmModule
 import me.weishu.kernelsu.ksuApp
 import org.json.JSONArray
 import java.io.File
@@ -137,6 +138,51 @@ fun getModuleCount(): Int {
         val array = JSONArray(result)
         return array.length()
     }.getOrElse { return 0 }
+}
+
+fun listKpms(): List<KpmModule> {
+    val shell = getRootShell()
+    val out = shell.newJob()
+        .add("${getKsuDaemonPath()} kpm list").to(ArrayList(), null).exec().out
+    val result = out.joinToString("\n").ifBlank { "[]" }
+    return runCatching {
+        val array = JSONArray(result)
+        (0 until array.length()).map { index ->
+            val obj = array.getJSONObject(index)
+            KpmModule(
+                name = obj.optString("name"),
+                version = obj.optString("version"),
+                license = obj.optString("license"),
+                author = obj.optString("author"),
+                description = obj.optString("description"),
+                args = obj.optString("args"),
+            )
+        }
+    }.getOrElse {
+        Log.e(TAG, "failed to parse KPM list: $result", it)
+        emptyList()
+    }
+}
+
+fun loadKpm(uri: Uri): Boolean {
+    val resolver = ksuApp.contentResolver
+    with(resolver.openInputStream(uri)) {
+        val file = File(ksuApp.cacheDir, "module.kpm")
+        file.outputStream().use { output ->
+            this?.copyTo(output)
+        }
+
+        val result = execKsud("kpm load ${file.absolutePath}", true)
+        Log.i(TAG, "load KPM $uri result: $result")
+        file.delete()
+        return result
+    }
+}
+
+fun unloadKpm(name: String): Boolean {
+    val result = execKsud("kpm unload $name", true)
+    Log.i(TAG, "unload KPM $name result: $result")
+    return result
 }
 
 fun getSuperuserCount(): Int {

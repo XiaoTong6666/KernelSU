@@ -83,6 +83,13 @@ module_param(allow_shell, bool, 0);
 bool ksu_no_custom_rc = false;
 module_param_named(norc, ksu_no_custom_rc, bool, 0);
 
+#ifdef CONFIG_ARM64
+extern void __init kpm_module_init(void);
+extern void __init kpm_syscall_init(void);
+extern void kpm_bypass_selinux(void);
+extern void kpm_unbypass_selinux(void);
+#endif
+
 int __init kernelsu_init(void)
 {
 #if defined(__x86_64__)
@@ -136,6 +143,11 @@ int __init kernelsu_init(void)
 
     ksu_supercalls_init();
 
+#ifdef CONFIG_ARM64
+    kpm_module_init();
+    kpm_syscall_init();
+#endif
+
     if (ksu_late_loaded) {
         pr_info("late load mode, skipping kprobe hooks\n");
 
@@ -147,7 +159,6 @@ int __init kernelsu_init(void)
         // with KSU SELinux domain before enforcing SELinux, so it
         // can continue to access /data/app etc. after enforcement.
         escape_to_root_for_init();
-
         ksu_allowlist_init();
         ksu_load_allow_list();
 
