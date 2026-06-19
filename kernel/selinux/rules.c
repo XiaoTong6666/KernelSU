@@ -255,6 +255,8 @@ static int sepol_expected_argc(u32 cmd)
         return 4;
     case KSU_SEPOLICY_CMD_GENFSCON:
         return 3;
+    case KSU_SEPOLICY_CMD_CLONE_TYPE:
+        return 2;
     default:
         return -EINVAL;
     }
@@ -423,6 +425,20 @@ static int apply_one_sepolicy_cmd(struct policydb *db, const struct sepol_data *
         }
         return 0;
 
+    case KSU_SEPOLICY_CMD_CLONE_TYPE:
+        ret = sepol_require_not_all(args[0], "src");
+        if (ret < 0)
+            return ret;
+        ret = sepol_require_not_all(args[1], "dst");
+        if (ret < 0)
+            return ret;
+
+        if (!ksu_clone_type(db, args[0], args[1])) {
+            pr_err("sepol: clone_type failed.\n");
+            return -EINVAL;
+        }
+        return 0;
+
     default:
         pr_err("sepol: unknown cmd: %d\n", header->cmd);
         return -EINVAL;
@@ -508,6 +524,8 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
         ret = apply_one_sepolicy_cmd(db, &header, args);
         if (ret < 0) {
             pr_err("sepol: cmd #%u failed, cmd=%u subcmd=%u.\n", cmd_index, header.cmd, header.subcmd);
+            if (header.cmd == KSU_SEPOLICY_CMD_CLONE_TYPE)
+                goto out_drop_new_policy;
         } else {
             success_cmd_count++;
         }
