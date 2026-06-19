@@ -5,6 +5,7 @@
 #include "ss/policydb.h"
 #include "ss/services.h"
 #include <linux/gfp.h>
+#include <linux/sched.h>
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/version.h>
@@ -897,6 +898,9 @@ static bool clone_avtab_rules(struct policydb *db, struct type_datum *src, struc
         struct avtab_extended_perms *new_xperms = NULL;
         struct avtab_node *old_node = snapshot[idx];
 
+        if ((idx & 0x3ff) == 0)
+            cond_resched();
+
         if (old_node->key.source_type != src->value && old_node->key.target_type != src->value)
             continue;
 
@@ -999,6 +1003,9 @@ static bool clone_filename_trans_rules(struct policydb *db, struct type_datum *s
         const char *tgt_name;
         const char *def_name;
         u32 bit;
+
+        if ((idx & 0xff) == 0)
+            cond_resched();
 
         if (key->ttype != src->value && datum->otype != src->value && !ebitmap_get_bit(&datum->stypes, src->value - 1))
             continue;
@@ -1105,6 +1112,7 @@ bool ksu_clone_type(struct policydb *db, const char *src, const char *dst)
 
     if (!add_type(db, dst, false))
         return false;
+    pr_info("clone_type: added type %s\n", dst);
 
     dst_d = symtab_search(&db->p_types, dst);
     if (!dst_d || dst_d->attribute)
@@ -1112,16 +1120,22 @@ bool ksu_clone_type(struct policydb *db, const char *src, const char *dst)
 
     if (!clone_type_attributes(db, src_d, dst_d, &attr_count))
         return false;
+    pr_info("clone_type: attributes copied count=%u\n", attr_count);
     if (!clone_type_roles(db, src_d, dst_d))
         return false;
+    pr_info("clone_type: roles copied\n");
     if (!clone_type_constraints(db, src_d, dst_d, &constraint_count))
         return false;
+    pr_info("clone_type: constraints copied count=%u\n", constraint_count);
     if (!clone_type_permissive(db, src_d, dst_d, &permissive_copied))
         return false;
+    pr_info("clone_type: permissive copied=%d\n", permissive_copied ? 1 : 0);
     if (!clone_avtab_rules(db, src_d, dst_d, &avtab_count))
         return false;
+    pr_info("clone_type: avtab copied count=%u\n", avtab_count);
     if (!clone_filename_trans_rules(db, src_d, dst_d, &filename_trans_count))
         return false;
+    pr_info("clone_type: filename_trans copied count=%u\n", filename_trans_count);
 
     pr_info("clone_type: %s -> %s attrs=%u constraints=%u avtab=%u filename_trans=%u permissive=%d\n", src, dst,
             attr_count, constraint_count, avtab_count, filename_trans_count, permissive_copied ? 1 : 0);
@@ -1209,6 +1223,7 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
     struct policy_file fp;
 
     len = old_pol->policydb.len;
+    pr_info("sepolicy: duplicating live policy len=%zu\n", len);
     data = vmalloc(len);
     if (!data) {
         pr_err("alloc policy len %ld\n", len);
@@ -1224,6 +1239,7 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
         pr_err("sepolicy: policydb_write: %d\n", ret);
         goto out_free_data;
     }
+    pr_info("sepolicy: policydb_write complete len=%zu\n", len);
 
     // https://android-review.googlesource.com/c/kernel/common/+/3009995/11/security/selinux/ss/policydb.c
     // fixup config
@@ -1249,17 +1265,20 @@ struct selinux_policy *ksu_dup_sepolicy(struct selinux_policy *old_pol)
         pr_err("sepolicy: dup old pol\n");
         goto out_free_data;
     }
+    pr_info("sepolicy: selinux_policy header duplicated\n");
     memset(&new_pol->policydb, 0, sizeof(new_pol->policydb));
 
     // rewind fp
     fp.data = data;
     fp.len = len;
 
+    pr_info("sepolicy: policydb_read begin len=%zu\n", len);
     ret = policydb_read(&new_pol->policydb, &fp);
     if (ret) {
         pr_err("sepolicy: policydb_read: %d\n", ret);
         goto out_free_policydb;
     }
+    pr_info("sepolicy: policydb_read complete len=%zu\n", len);
     new_pol->policydb.len = old_pol->policydb.len;
     kvfree(data);
 
