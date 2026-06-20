@@ -176,6 +176,8 @@ int escape_with_root_profile(void)
     memcpy(&cred->cap_bset, &profile->capabilities.effective, sizeof(cred->cap_bset));
 
     setup_groups(profile, cred);
+    pr_info("escape_with_root_profile: uid=%u euid=%u gid=%u domain=%s\n", cred->uid.val, cred->euid.val, cred->gid.val,
+            profile->selinux_domain);
     setup_selinux(profile->selinux_domain, cred);
 
     commit_creds(cred);

@@ -255,6 +255,8 @@ static int sepol_expected_argc(u32 cmd)
         return 4;
     case KSU_SEPOLICY_CMD_GENFSCON:
         return 3;
+    case KSU_SEPOLICY_CMD_CLONE_TYPE:
+        return 2;
     default:
         return -EINVAL;
     }
@@ -423,6 +425,20 @@ static int apply_one_sepolicy_cmd(struct policydb *db, const struct sepol_data *
         }
         return 0;
 
+    case KSU_SEPOLICY_CMD_CLONE_TYPE:
+        ret = sepol_require_not_all(args[0], "src");
+        if (ret < 0)
+            return ret;
+        ret = sepol_require_not_all(args[1], "dst");
+        if (ret < 0)
+            return ret;
+
+        if (!ksu_clone_type(db, args[0], args[1])) {
+            pr_err("sepol: clone_type failed.\n");
+            return -EINVAL;
+        }
+        return 0;
+
     default:
         pr_err("sepol: unknown cmd: %d\n", header->cmd);
         return -EINVAL;
@@ -432,6 +448,7 @@ static int apply_one_sepolicy_cmd(struct policydb *db, const struct sepol_data *
 int handle_sepolicy(void __user *user_data, u64 data_len)
 {
     struct selinux_policy *pol, *old_pol;
+    struct selinux_policy *locked_old_pol;
     struct policydb *db;
     struct sepol_batch_cursor cursor;
     u8 *payload;
@@ -462,14 +479,16 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
     }
 
     mutex_lock(&selinux_state.policy_mutex);
-
-    old_pol = selinux_state.policy;
-    pol = ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+    locked_old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
+    pol = ksu_dup_sepolicy(locked_old_pol);
     if (IS_ERR(pol)) {
+        mutex_unlock(&selinux_state.policy_mutex);
         ret = PTR_ERR(pol);
         pr_err("ksu_dup_sepolicy err: %d\n", ret);
-        goto out_unlock;
+        goto out_free;
     }
+    mutex_unlock(&selinux_state.policy_mutex);
+    pr_info("sepol: duplicated policy ready, payload_len=%llu\n", data_len);
     db = &pol->policydb;
 
     cursor.cur = payload;
@@ -505,24 +524,40 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
             }
         }
 
+        pr_info("sepol: begin cmd #%u cmd=%u subcmd=%u\n", cmd_index, header.cmd, header.subcmd);
         ret = apply_one_sepolicy_cmd(db, &header, args);
         if (ret < 0) {
             pr_err("sepol: cmd #%u failed, cmd=%u subcmd=%u.\n", cmd_index, header.cmd, header.subcmd);
+            if (header.cmd == KSU_SEPOLICY_CMD_CLONE_TYPE)
+                goto out_drop_new_policy;
         } else {
             success_cmd_count++;
+            pr_info("sepol: end cmd #%u cmd=%u subcmd=%u\n", cmd_index, header.cmd, header.subcmd);
         }
         cmd_index++;
     }
 
+    mutex_lock(&selinux_state.policy_mutex);
+    old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
+    if (old_pol != locked_old_pol) {
+        ret = -EAGAIN;
+        pr_err("sepol: policy changed during offline patch, retry required.\n");
+        goto out_drop_new_policy_locked;
+    }
+
     rcu_assign_pointer(selinux_state.policy, pol);
+    pr_info("sepol: publishing new policy\n");
     synchronize_rcu();
     ksu_destroy_sepolicy(old_pol);
 
     reset_avc_cache();
+    pr_info("sepol: policy publish complete, success_cmd_count=%d\n", success_cmd_count);
     ret = success_cmd_count;
     goto out_unlock;
 
 out_drop_new_policy:
+    mutex_lock(&selinux_state.policy_mutex);
+out_drop_new_policy_locked:
     ksu_destroy_sepolicy(pol);
 out_unlock:
     mutex_unlock(&selinux_state.policy_mutex);

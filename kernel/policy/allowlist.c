@@ -343,13 +343,16 @@ struct root_profile *ksu_get_root_profile(uid_t uid)
 #else
     struct perm_data *p = NULL;
     struct root_profile *res;
+    const char *default_reason = "no_matching_profile";
 
     rcu_read_lock();
     if (is_uid_manager(uid)) {
+        default_reason = "manager_uid";
         goto use_default;
     }
 
     if (unlikely(allow_shell && uid == SHELL_UID)) {
+        default_reason = "shell_uid";
         goto use_default;
     }
 
@@ -362,6 +365,10 @@ retry:
                     goto retry;
                 }
                 res = &p->profile.rp_config.profile;
+                pr_info("root profile selected: uid=%u key=%s domain=%s use_default=0\n", uid, p->profile.key,
+                        res->selinux_domain);
+            } else {
+                default_reason = "profile_use_default";
             }
             break;
         }
@@ -370,6 +377,8 @@ retry:
     if (unlikely(!res)) {
     use_default:
         res = &default_root_profile;
+        pr_info("root profile selected: uid=%u key=<default> domain=%s reason=%s\n", uid, res->selinux_domain,
+                default_reason);
     }
 
     rcu_read_unlock();
