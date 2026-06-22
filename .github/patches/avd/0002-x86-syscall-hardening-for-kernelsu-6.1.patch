@@ -1,0 +1,228 @@
+From 68fe319b26393aed97ed2f4b2ed249714f6952f6 Mon Sep 17 00:00:00 2001
+From: XiaoTong6666 <3278671549@qq.com>
+Date: Mon, 22 Jun 2026 22:14:52 +0800
+Subject: [PATCH] x86: Add syscall hardening hooks for KernelSU
+
+Change-Id: Ica084a86b18e84f3342bb6fc1d20d94e3416466d
+---
+ arch/x86/entry/common.c            | 20 ++++++++++++++++---
+ arch/x86/entry/syscall_32.c        |  8 ++++++++
+ arch/x86/entry/syscall_x32.c       |  6 ++++++
+ arch/x86/include/asm/cpufeatures.h |  1 +
+ arch/x86/include/asm/syscall.h     | 10 ++++++++++
+ arch/x86/kernel/cpu/common.c       | 31 ++++++++++++++++++++++++++++++
+ drivers/base/cpu.c                 |  9 +++++++++
+ include/linux/cpu.h                |  3 +++
+ 8 files changed, 85 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/entry/common.c b/arch/x86/entry/common.c
+index e72dac092..252377d60 100644
+--- a/arch/x86/entry/common.c
++++ b/arch/x86/entry/common.c
+@@ -48,7 +48,11 @@ static __always_inline bool do_syscall_x64(struct pt_regs *regs, int nr)
+ 
+ 	if (likely(unr < NR_syscalls)) {
+ 		unr = array_index_nospec(unr, NR_syscalls);
+-		regs->ax = x64_sys_call(regs, unr);
++		if (likely(cpu_feature_enabled(X86_FEATURE_INDIRECT_SAFE) &&
++			   x86_syscall_hardening_enabled))
++			regs->ax = sys_call_table[unr](regs);
++		else
++			regs->ax = x64_sys_call(regs, unr);
+ 		return true;
+ 	}
+ 	return false;
+@@ -65,7 +69,11 @@ static __always_inline bool do_syscall_x32(struct pt_regs *regs, int nr)
+ 
+ 	if (IS_ENABLED(CONFIG_X86_X32_ABI) && likely(xnr < X32_NR_syscalls)) {
+ 		xnr = array_index_nospec(xnr, X32_NR_syscalls);
+-		regs->ax = x32_sys_call(regs, xnr);
++		if (likely(cpu_feature_enabled(X86_FEATURE_INDIRECT_SAFE) &&
++			   x86_syscall_hardening_enabled))
++			regs->ax = x32_sys_call_table[xnr](regs);
++		else
++			regs->ax = x32_sys_call(regs, xnr);
+ 		return true;
+ 	}
+ 	return false;
+@@ -114,7 +122,13 @@ static __always_inline void do_syscall_32_irqs_on(struct pt_regs *regs, int nr)
+ 
+ 	if (likely(unr < IA32_NR_syscalls)) {
+ 		unr = array_index_nospec(unr, IA32_NR_syscalls);
+-		regs->ax = ia32_sys_call(regs, unr);
++	#ifdef CONFIG_X86_64
++		if (likely(cpu_feature_enabled(X86_FEATURE_INDIRECT_SAFE) &&
++			   x86_syscall_hardening_enabled))
++			regs->ax = ia32_sys_call_table[unr](regs);
++		else
++	#endif
++			regs->ax = ia32_sys_call(regs, unr);
+ 	} else if (nr != -1) {
+ 		regs->ax = __ia32_sys_ni_syscall(regs);
+ 	}
+diff --git a/arch/x86/entry/syscall_32.c b/arch/x86/entry/syscall_32.c
+index c2235bae1..0152a175e 100644
+--- a/arch/x86/entry/syscall_32.c
++++ b/arch/x86/entry/syscall_32.c
+@@ -31,6 +31,14 @@ const sys_call_ptr_t sys_call_table[] = {
+ #undef __SYSCALL
+ #endif
+ 
++#ifdef CONFIG_IA32_EMULATION
++#define __SYSCALL(nr, sym) __ia32_##sym,
++const sys_call_ptr_t ia32_sys_call_table[] = {
++#include <asm/syscalls_32.h>
++};
++#undef __SYSCALL
++#endif
++
+ #define __SYSCALL(nr, sym) case nr: return __ia32_##sym(regs);
+ 
+ long ia32_sys_call(const struct pt_regs *regs, unsigned int nr)
+diff --git a/arch/x86/entry/syscall_x32.c b/arch/x86/entry/syscall_x32.c
+index 03de4a932..2a9ff9f67 100644
+--- a/arch/x86/entry/syscall_x32.c
++++ b/arch/x86/entry/syscall_x32.c
+@@ -11,6 +11,12 @@
+ #include <asm/syscalls_x32.h>
+ #undef __SYSCALL
+ 
++#define __SYSCALL(nr, sym) __x64_##sym,
++const sys_call_ptr_t x32_sys_call_table[] = {
++#include <asm/syscalls_x32.h>
++};
++#undef __SYSCALL
++
+ #define __SYSCALL(nr, sym) case nr: return __x64_##sym(regs);
+ 
+ long x32_sys_call(const struct pt_regs *regs, unsigned int nr)
+diff --git a/arch/x86/include/asm/cpufeatures.h b/arch/x86/include/asm/cpufeatures.h
+index 5709cbba2..409b0112a 100644
+--- a/arch/x86/include/asm/cpufeatures.h
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -495,4 +495,5 @@
+ #define X86_BUG_RFDS			X86_BUG(1*32 + 2) /* CPU is vulnerable to Register File Data Sampling */
+ #define X86_BUG_BHI			X86_BUG(1*32 + 3) /* CPU is affected by Branch History Injection */
+ #define X86_BUG_IBPB_NO_RET		X86_BUG(1*32 + 4) /* "ibpb_no_ret" IBPB omits return target predictions */
++#define X86_FEATURE_INDIRECT_SAFE	(21*32+15) /* Indirect syscall dispatch is hardened */
+ #endif /* _ASM_X86_CPUFEATURES_H */
+diff --git a/arch/x86/include/asm/syscall.h b/arch/x86/include/asm/syscall.h
+index bad79b82d..4583a1584 100644
+--- a/arch/x86/include/asm/syscall.h
++++ b/arch/x86/include/asm/syscall.h
+@@ -20,6 +20,16 @@
+ typedef long (*sys_call_ptr_t)(const struct pt_regs *);
+ extern const sys_call_ptr_t sys_call_table[];
+ 
++#if defined(CONFIG_X86_64) && defined(CONFIG_IA32_EMULATION)
++extern const sys_call_ptr_t ia32_sys_call_table[];
++#endif
++
++extern const sys_call_ptr_t x32_sys_call_table[];
++
++#ifdef CONFIG_X86_64
++extern bool x86_syscall_hardening_enabled;
++#endif
++
+ /*
+  * These may not exist, but still put the prototypes in so we
+  * can use IS_ENABLED().
+diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
+index 62aaabea7..df7ad9f08 100644
+--- a/arch/x86/kernel/cpu/common.c
++++ b/arch/x86/kernel/cpu/common.c
+@@ -292,6 +292,36 @@ static int __init x86_noinvpcid_setup(char *s)
+ }
+ early_param("noinvpcid", x86_noinvpcid_setup);
+ 
++#ifdef CONFIG_X86_64
++bool x86_syscall_hardening_enabled __ro_after_init = true;
++
++static int __init x86_syscall_hardening_setup(char *str)
++{
++	if (!str)
++		return -EINVAL;
++
++	if (!strcmp(str, "off")) {
++		x86_syscall_hardening_enabled = false;
++		pr_info("syscall_hardening: indirect syscall dispatch disabled\n");
++		return 0;
++	}
++
++	if (!strcmp(str, "on"))
++		return 0;
++
++	return -EINVAL;
++}
++early_param("syscall_hardening", x86_syscall_hardening_setup);
++
++ssize_t cpu_show_syscall_hardening(struct device *dev,
++				   struct device_attribute *attr,
++				   char *buf)
++{
++	return sysfs_emit(buf, "%s\n",
++			x86_syscall_hardening_enabled ? "on" : "off");
++}
++#endif
++
+ #ifdef CONFIG_X86_32
+ static int cachesize_override = -1;
+ static int disable_x86_serial_nr = 1;
+@@ -2470,6 +2500,7 @@ void __init arch_cpu_finalize_init(void)
+ 		print_cpu_info(&boot_cpu_data);
+ 	}
+ 
++	setup_force_cpu_cap(X86_FEATURE_INDIRECT_SAFE);
+ 	cpu_select_mitigations();
+ 
+ 	arch_smt_update();
+diff --git a/drivers/base/cpu.c b/drivers/base/cpu.c
+index 31da94afe..3d11ef4c2 100644
+--- a/drivers/base/cpu.c
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -595,6 +595,13 @@ ssize_t __weak cpu_show_reg_file_data_sampling(struct device *dev,
+ 	return sysfs_emit(buf, "Not affected\n");
+ }
+ 
++ssize_t __weak cpu_show_syscall_hardening(struct device *dev,
++					  struct device_attribute *attr,
++					  char *buf)
++{
++	return sysfs_emit(buf, "unknown\n");
++}
++
+ static DEVICE_ATTR(meltdown, 0444, cpu_show_meltdown, NULL);
+ static DEVICE_ATTR(spectre_v1, 0444, cpu_show_spectre_v1, NULL);
+ static DEVICE_ATTR(spectre_v2, 0444, cpu_show_spectre_v2, NULL);
+@@ -609,6 +616,7 @@ static DEVICE_ATTR(retbleed, 0444, cpu_show_retbleed, NULL);
+ static DEVICE_ATTR(gather_data_sampling, 0444, cpu_show_gds, NULL);
+ static DEVICE_ATTR(spec_rstack_overflow, 0444, cpu_show_spec_rstack_overflow, NULL);
+ static DEVICE_ATTR(reg_file_data_sampling, 0444, cpu_show_reg_file_data_sampling, NULL);
++static DEVICE_ATTR(syscall_hardening, 0444, cpu_show_syscall_hardening, NULL);
+ 
+ static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+ 	&dev_attr_meltdown.attr,
+@@ -625,6 +633,7 @@ static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+ 	&dev_attr_gather_data_sampling.attr,
+ 	&dev_attr_spec_rstack_overflow.attr,
+ 	&dev_attr_reg_file_data_sampling.attr,
++	&dev_attr_syscall_hardening.attr,
+ 	NULL
+ };
+ 
+diff --git a/include/linux/cpu.h b/include/linux/cpu.h
+index 4b06b1f1e..b4b5c4d18 100644
+--- a/include/linux/cpu.h
++++ b/include/linux/cpu.h
+@@ -76,6 +76,9 @@ extern ssize_t cpu_show_gds(struct device *dev,
+ 			    struct device_attribute *attr, char *buf);
+ extern ssize_t cpu_show_reg_file_data_sampling(struct device *dev,
+ 					       struct device_attribute *attr, char *buf);
++extern ssize_t cpu_show_syscall_hardening(struct device *dev,
++					  struct device_attribute *attr,
++					  char *buf);
+ 
+ extern __printf(4, 5)
+ struct device *cpu_device_create(struct device *parent, void *drvdata,
+-- 
+2.53.0

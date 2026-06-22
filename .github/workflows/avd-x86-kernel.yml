@@ -1,0 +1,293 @@
+name: Build AVD x86_64 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Android CI build id from BUILD_INFO page
+        required: true
+        default: "15053784"
+        type: string
+      patch_file:
+        description: Patch file inside this repo
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        description: Uploaded artifact name
+        required: false
+        default: avd-kernel-x86_64
+        type: string
+  workflow_call:
+    inputs:
+      build_id:
+        required: true
+        type: string
+      patch_file:
+        required: false
+        default: ""
+        type: string
+      artifact_name:
+        required: false
+        default: avd-kernel-x86_64
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+          testing: false
+
+      - uses: actions/checkout@v5
+        with:
+          path: android-kernel/KernelSU
+          fetch-depth: 0
+
+      - name: Install repo tool
+        run: sudo apt-get update && sudo apt-get install -y repo
+
+      - name: Resolve BUILD_INFO metadata
+        id: build_info
+        working-directory: android-kernel
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+        run: |
+          curl -fsSL "https://ci.android.com/builds/submitted/${BUILD_ID}/kernel_virt_x86_64/latest/view/BUILD_INFO" -o build_info_page.html
+          python3 - <<'PY'
+          import json
+          import html
+          import os
+          import re
+
+          build_id = os.environ["BUILD_ID"]
+
+          with open("build_info_page.html", "r", encoding="utf-8") as fp:
+              page_html = fp.read()
+
+          m = re.search(r'"artifactUrl":"([^"]+)"', page_html)
+          if not m:
+              raise SystemExit("Failed to locate artifactUrl in BUILD_INFO page")
+          artifact_url = html.unescape(m.group(1).replace('\\u0026', '&'))
+          artifact_url = artifact_url.replace('\\/', '/')
+
+          os.system(f'curl -fsSL "{artifact_url}" -o BUILD_INFO.raw.json')
+          with open("BUILD_INFO.raw.json", "r", encoding="utf-8") as fp:
+              build_info = json.load(fp)
+
+          with open("BUILD_INFO.json", "w", encoding="utf-8") as fp:
+              json.dump(build_info, fp, indent=2, sort_keys=True)
+
+          repo_dict = build_info["repo-dict"]
+          outputs = {
+              "manifest_branch": build_info["repo-init-branch"],
+              "common_revision": repo_dict["kernel/common"],
+              "build_revision": repo_dict["kernel/build"],
+              "virtual_device_revision": repo_dict["kernel/common-modules/virtual-device"],
+          }
+
+          print("Resolved BUILD_INFO metadata:")
+          for key, value in outputs.items():
+              print(f"  {key}: {value}")
+
+          github_output = os.environ["GITHUB_OUTPUT"]
+          with open(github_output, "a", encoding="utf-8") as fp:
+              for key, value in outputs.items():
+                    fp.write(f"{key}={value}\n")
+          PY
+
+      - name: Restore repo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: android-kernel/.repo
+          key: ${{ runner.os }}-avd-kernel-${{ steps.build_info.outputs.manifest_branch }}-${{ steps.build_info.outputs.common_revision }}-${{ steps.build_info.outputs.build_revision }}-${{ steps.build_info.outputs.virtual_device_revision }}
+          restore-keys: |
+            ${{ runner.os }}-avd-kernel-${{ steps.build_info.outputs.manifest_branch }}-
+
+      - name: Resolve Bazel cache family
+        id: bazel_cache_family
+        shell: bash
+        run: |
+          case "${{ steps.build_info.outputs.manifest_branch }}" in
+            common-android16-6.12*)
+              family="6.12"
+              ;;
+            common-android15-6.6*)
+              family="6.6"
+              ;;
+            common-android14-6.1*)
+              family="6.1"
+              ;;
+            common-android13-5.15*)
+              family="5.15"
+              ;;
+            common-android12-5.10*)
+              family="5.10"
+              ;;
+            *)
+              family="misc"
+              ;;
+          esac
+          echo "family=${family}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Bazel cache family: ${family}"
+
+      - name: Restore Bazel out cache
+        uses: actions/cache/restore@v4
+        with:
+          path: android-kernel/out
+          key: ${{ runner.os }}-avd-kernel-out-${{ steps.bazel_cache_family.outputs.family }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-avd-kernel-out-${{ steps.bazel_cache_family.outputs.family }}-
+
+      - name: Clean incomplete repo cache restore
+        working-directory: android-kernel
+        run: |
+          if [ -d .repo/manifests ] && [ ! -f .repo/manifest.xml ]; then
+            echo "Removing incomplete repo restore before sync"
+            rm -rf .repo
+          fi
+
+      - name: Setup kernel source
+        working-directory: android-kernel
+        env:
+          REPO_NO_UPDATE: "1"
+        run: |
+          echo "Free space before repo sync:"
+          df -h
+          echo "CPU count: $(nproc --all)"
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b "${{ steps.build_info.outputs.manifest_branch }}"
+          if ! repo --trace sync -c -j4 --no-tags --optimized-fetch --prune; then
+            echo "repo sync with -j4 failed, retrying with -j1"
+            repo --trace sync -c -j1 --no-tags --optimized-fetch --prune
+          fi
+          repo manifest -r -o resolved-manifest.xml
+          echo "Free space after repo sync:"
+          df -h
+
+      - name: Save repo cache
+        working-directory: android-kernel
+        run: |
+          find .repo -path '*/objects/info/commit-graphs' -type d -prune -exec rm -rf {} +
+
+      - name: Save repo cache archive
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: android-kernel/.repo
+          key: ${{ runner.os }}-avd-kernel-${{ steps.build_info.outputs.manifest_branch }}-${{ steps.build_info.outputs.common_revision }}-${{ steps.build_info.outputs.build_revision }}-${{ steps.build_info.outputs.virtual_device_revision }}
+
+      - name: Checkout exact BUILD_INFO revisions
+        working-directory: android-kernel
+        run: |
+          git -C common fetch --depth=1 --no-tags aosp "${{ steps.build_info.outputs.common_revision }}"
+          git -C build/kernel fetch --depth=1 --no-tags aosp "${{ steps.build_info.outputs.build_revision }}"
+          git -C common-modules/virtual-device fetch --depth=1 --no-tags aosp "${{ steps.build_info.outputs.virtual_device_revision }}"
+          git -C common checkout "${{ steps.build_info.outputs.common_revision }}"
+          git -C build/kernel checkout "${{ steps.build_info.outputs.build_revision }}"
+          git -C common-modules/virtual-device checkout "${{ steps.build_info.outputs.virtual_device_revision }}"
+
+      - name: Generate KernelSU version file
+        working-directory: android-kernel
+        run: |
+          KSU_GIT_COUNT="$(git -C KernelSU rev-list --count HEAD)"
+          KSU_VERSION="$((30000 + KSU_GIT_COUNT))"
+          printf 'KernelSU git count: %s\n' "$KSU_GIT_COUNT"
+          printf 'KernelSU computed version: %s\n' "$KSU_VERSION"
+          sed -i "s/ccflags-y += -DKSU_VERSION=16/ccflags-y += -DKSU_VERSION=${KSU_VERSION}/" KernelSU/kernel/Kbuild
+
+      - name: Integrate KernelSU driver
+        working-directory: android-kernel
+        run: |
+          ln -sf ../../KernelSU/kernel common/drivers/kernelsu
+          grep -q 'obj-\$(CONFIG_KSU) += kernelsu/' common/drivers/Makefile || \
+            printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
+          grep -q 'source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig || \
+            sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
+
+      - name: Apply AVD x86 patch
+        working-directory: android-kernel
+        run: |
+          PATCHED_FILES=(
+            arch/x86/entry/common.c
+            arch/x86/entry/syscall_32.c
+            arch/x86/entry/syscall_x32.c
+            arch/x86/include/asm/cpufeatures.h
+            arch/x86/include/asm/syscall.h
+            arch/x86/kernel/cpu/common.c
+            drivers/base/cpu.c
+            include/linux/cpu.h
+          )
+
+          PATCH_FILE=""
+          case "${{ steps.build_info.outputs.manifest_branch }}" in
+            common-android16-6.12|common-android16-6.12-*)
+              PATCH_FILE="../KernelSU/.github/patches/avd/0001-x86-syscall-hardening-for-kernelsu-6.12.patch"
+              ;;
+            common-android14-6.1|common-android14-6.1-*|common-android13-5.15|common-android13-5.15-*)
+              PATCH_FILE="../KernelSU/.github/patches/avd/0002-x86-syscall-hardening-for-kernelsu-6.1.patch"
+              ;;
+          esac
+
+          if python3 KernelSU/.github/scripts/apply_avd_x86_hardening.py \
+            --common-dir "$PWD/common" \
+            --branch "${{ steps.build_info.outputs.manifest_branch }}"; then
+            echo "Applied x86 hardening via Python fallback script"
+          else
+            echo "Python fallback failed; restoring touched files and trying patch fallback"
+            git -C common checkout -- "${PATCHED_FILES[@]}"
+
+            if [[ -n "$PATCH_FILE" ]]; then
+              git -C common apply "$PATCH_FILE"
+            elif [[ -n "${{ inputs.patch_file }}" ]]; then
+              git -C common apply "../KernelSU/${{ inputs.patch_file }}"
+            else
+              echo "No patch fallback available for manifest branch: ${{ steps.build_info.outputs.manifest_branch }}" >&2
+              exit 1
+            fi
+          fi
+          grep -q '^CONFIG_KSU=y$' common-modules/virtual-device/virtual_device.fragment || \
+            sed -i '1iCONFIG_KSU=y' common-modules/virtual-device/virtual_device.fragment
+
+      - name: Build AVD kernel
+        working-directory: android-kernel
+        run: |
+          tools/bazel run --verbose_failures --jobs=4 --make_jobs=4 --config=android_ci //common-modules/virtual-device:virtual_device_x86_64_dist -- --destdir=virt &
+          bazel_pid=$!
+          while kill -0 "$bazel_pid" 2>/dev/null; do
+            echo "still building AVD kernel: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            sleep 60
+          done
+          wait "$bazel_pid"
+
+      - name: Save Bazel out cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: android-kernel/out
+          key: ${{ runner.os }}-avd-kernel-out-${{ steps.bazel_cache_family.outputs.family }}-${{ github.run_id }}
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            android-kernel/virt/bzImage
+            android-kernel/virt/kernel_x86_64_dot_config
+            android-kernel/virt/System.map
+            android-kernel/virt/vmlinux
+            android-kernel/virt/vmlinux.symvers
+            android-kernel/BUILD_INFO.json
