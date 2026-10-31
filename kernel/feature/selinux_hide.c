@@ -621,14 +621,14 @@ static int string_to_context_struct(struct policydb *pol, struct policydb *orig_
         p++;
 
     if (*p == 0)
-        goto out;
+        goto out_no_mls;
 
     *p++ = 0;
 
     usrdatum = symtab_search(&pol->p_users, scontextp);
     orig_usrdatum = symtab_search(&orig_pol->p_users, scontextp);
     if (!usrdatum)
-        goto out;
+        goto out_no_mls;
 
     ctx->user = usrdatum->value;
     if (orig_usrdatum)
@@ -642,14 +642,14 @@ static int string_to_context_struct(struct policydb *pol, struct policydb *orig_
         p++;
 
     if (*p == 0)
-        goto out;
+        goto out_no_mls;
 
     *p++ = 0;
 
     role = symtab_search(&pol->p_roles, scontextp);
     orig_role = symtab_search(&orig_pol->p_roles, scontextp);
     if (!role)
-        goto out;
+        goto out_no_mls;
     ctx->role = role->value;
     if (orig_role)
         orig_ctx->role = orig_role->value;
@@ -666,7 +666,7 @@ static int string_to_context_struct(struct policydb *pol, struct policydb *orig_
     typdatum = symtab_search(&pol->p_types, scontextp);
     orig_typdatum = symtab_search(&orig_pol->p_types, scontextp);
     if (!typdatum || typdatum->attribute)
-        goto out;
+        goto out_no_mls;
 
     ctx->type = typdatum->value;
     if (orig_typdatum && !orig_typdatum->attribute)
@@ -691,7 +691,9 @@ static int string_to_context_struct(struct policydb *pol, struct policydb *orig_
 
     if (!rc && !policydb_context_isvalid(pol, ctx))
         rc = -EINVAL;
-out:
+
+    // MLS may have allocated resources
+    // keep full cleanup
     if (rc) {
         context_destroy(ctx);
         // ignore live result if backup fails
@@ -701,6 +703,13 @@ out:
         context_destroy(orig_ctx);
     *orig_rc_p = orig_rc;
     return rc;
+
+out_no_mls:
+    // no MLS parsing yet
+    // only scalar IDs were updated
+    // no dynamic resources to free
+    *orig_rc_p = -EINVAL;
+    return -EINVAL;
 }
 
 static int security_context_to_sid_with_policy(struct selinux_policy *policy, const char *scontext, u32 scontext_len,
